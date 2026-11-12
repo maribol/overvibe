@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "2026-11-12-auto-mode-setting",
+      "date": "2026-11-12",
+      "title": "Auto mode: on or off for new sessions, in Settings",
+      "body": "Auto mode: on or off for new sessions, in Settings. Off by default. The setup's Welcome step asks the same question.\n\n- Off: Claude Code, Codex and agy use their own approval prompts, and each request turns the row amber in the sidebar until you answer it. Codex keeps its stock workspace sandbox (the session folder, no network).\n- On: each tool's auto mode, and Codex gets network access and your projects folder.\n- A helper never gets more than the session that started it: from a session with auto mode off, overvibe new --auto is refused.\n- overvibe new and overvibe resume take --auto and --no-auto for one session, and every sidebar row shows auto or ask.",
+      "tag": "news",
+      "url": "https://overvibe.dev/security"
+    },
+    {
+      "id": "2026-11-12-agents-talk-natively",
+      "date": "2026-11-12",
+      "title": "The small things: open files from the terminal, see who needs you, close what's done",
+      "body": "The small things a terminal tab never did, and agents that talk to each other more naturally.\n\n- Open the file an agent names: ⌘-click a path in any terminal to open it (files in Chrome on a Mac, folders in Finder), or right-click it for Open in Chrome and Show in Finder. Bare names like walkthrough.mp4 are found from the folder named above them, the session's folder or a short search.\n- The sidebar says who needs you: an amber row for a question on screen, a hand when the last reply left you a decision, red when a Claude reply stopped on an API error (the Mac slept, the API was overloaded, a logout), and a faded row with a brush when a session looks done.\n- Close old sessions (the brush button, which counts the ones that look done, or ⌘K) sorts running sessions into done, waiting on you and unsure with each one's last reply, and closes the ones you tick. A session that looks done shows a bar with Close it. overvibe tidy gives an agent the same list; it never closes anything.\n- Close one and move on: hover a row's time for its ✕, or press ⌥W (⌘W in the Mac app). It stops, leaves its pin and the sidebar, and you land on the row below. The conversation stays in past sessions.\n- Messages between agents arrive natively. A Claude session Overvibe started gets a peer's message from Overvibe's own hook as one \"overvibe message\" line, never a turn you typed. Codex and agy get one short typed line, and a long message shows its start plus overvibe read <id>.\n- Type claude, codex or agy in a Terminal session and the row becomes that agent; it is a shell again when the CLI exits.\n- Drag a session from the sidebar onto an agent's terminal to mention it there.\n- Questions stay in the terminal, and a click never answers a menu by accident. Settings > Questions brings the dialog back.\n- overvibe accounts shows each account's usage and which one Claude in Chrome is paired with, and overvibe new --chrome runs there. Remote Control can be switched off per Claude account.\n- Agents in a session can no longer drive other sessions with raw tmux: they are pointed to overvibe peek and overvibe send.",
+      "tag": "news",
+      "url": "https://overvibe.dev/features"
+    },
+    {
+      "id": "2026-11-10-overvibe-1-0-0",
+      "date": "2026-11-10",
+      "title": "Overvibe 1.0.0: your agents work together",
+      "body": "Overvibe 1.0.0 runs Claude Code, Codex and agy (Gemini) side by side on your computer. Each one is the real CLI in its own terminal, and they can now work together.\n\n- Agents hand work to each other with one small CLI: overvibe new --attach starts a helper, overvibe send delivers a message into another agent's terminal with a line saying who sent it and how to reply, overvibe stop closes helpers when the job is done.\n- Helpers started with --attach sit nested under the session that started them, and a session with \"coordinator\" in its name gets a starred box at the top of the sidebar.\n- overvibe ls --past and overvibe resume continue a stopped session on the same conversation, with its name, row and parent.\n- New session opens Claude Code, Codex, agy or a plain Terminal in any folder, and can create a folder that does not exist yet. overvibe attach opens a running session in the terminal you are already in.\n- Permission prompts and questions on an agent's screen open as a dialog you answer from the page, and the row turns amber while it waits for you.\n- Text you select in a terminal is on the Mac clipboard when you let go of the mouse.\n- A message sent to a session while you are typing in it waits its turn, so it never lands in the middle of your text.\n- Each tool can have more than one account, chosen per folder or when you start a session.\n- What's new shows release notes like this one, and the desktop app gives Overvibe its own window and shortcuts.",
+      "tag": "release",
+      "minVersion": "1.0.0",
+      "url": "https://overvibe.dev/changelog",
+      "modal": true,
+      "draft": true
+    }
+  ]
+}

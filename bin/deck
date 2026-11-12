@@ -1,0 +1,4 @@
+#!/bin/sh
+# deck: the old name of the overvibe CLI, kept so running agents and old prompts keep working.
+dir=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+exec "$dir/overvibe" "$@"

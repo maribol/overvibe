@@ -1,0 +1,17 @@
+{
+  "name": "agent-deck-desktop",
+  "productName": "Overvibe",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.cjs",
+  "trustedDependencies": ["electron"],
+  "scripts": {
+    "start": "electron .",
+    "icon": "bash scripts/icon.sh",
+    "build": "bash scripts/build.sh"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.2.3"
+  }
+}

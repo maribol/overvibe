@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overvibe: Claude Code, Codex and agy in one deck, talking to each other</title>
+<meta name="description" content="Overvibe runs Claude Code, Codex and agy as real CLIs in tmux on your Mac or Linux machine, in a browser tab or a desktop window, and gives every agent an overvibe command to start and message the others.">
+<meta name="color-scheme" content="dark">
+<!-- LOGO PLACEHOLDER (favicon): swap in the final favicon from the logo work, e.g.
+<link rel="icon" href="favicon.svg" type="image/svg+xml"> -->
+<style>
+:root {
+  --bg: #101114;
+  --bg-2: #16181c;
+  --bg-3: #1c1f24;
+  --line: #2a2e35;
+  --ink: #e6e8eb;
+  --ink-soft: #b4b9c1;
+  --muted: #868d98;
+  --accent: #2b8f8a;
+  --accent-ink: #5fc4be;
+  --accent-bg: rgba(43, 143, 138, .14);
+  --warn: #d9a54a;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: var(--accent-ink); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre, kbd { font-family: var(--mono); }
+code { font-size: .88em; background: var(--bg-3); border: 1px solid var(--line); border-radius: 5px; padding: .08em .36em; color: var(--ink); overflow-wrap: anywhere; }
+pre { margin: 14px 0 18px; background: #0b0c0e; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.55; color: #d6dadf; }
+pre code { background: none; border: 0; padding: 0; font-size: inherit; overflow-wrap: anywhere; }
+pre.cols { white-space: pre; overflow-wrap: normal; }
+pre.cols code { overflow-wrap: normal; }
+pre .c { color: var(--muted); }
+pre .p { color: var(--accent-ink); user-select: none; }
+kbd { display: inline-block; min-width: 1.6em; text-align: center; font-size: 12.5px; padding: .1em .45em; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--bg-3); color: var(--ink); white-space: nowrap; }
+h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; }
+h2 { font-size: 28px; margin: 0 0 14px; }
+h3 { font-size: 18px; margin: 30px 0 8px; }
+p { margin: 0 0 14px; }
+ul, ol { margin: 0 0 16px; padding-left: 22px; }
+li { margin: 4px 0; }
+li::marker { color: var(--muted); }
+table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em; }
+td:first-child { white-space: nowrap; }
+.table-wrap { overflow-x: auto; }
+
+/* top bar */
+.top { position: sticky; top: 0; z-index: 10; background: rgba(16, 17, 20, .88); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.top-in { max-width: 1160px; margin: 0 auto; padding: 0 24px; height: 56px; display: flex; align-items: center; gap: 18px; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 700; font-size: 17px; }
+.brand:hover { text-decoration: none; }
+/* LOGO PLACEHOLDER: replace .logo-slot with the final mark (an <img> or inline <svg>, 28x28) */
+.logo-slot { width: 28px; height: 28px; border-radius: 7px; border: 1.5px dashed var(--accent); display: grid; place-items: center; font: 600 9px/1 var(--mono); color: var(--accent-ink); }
+.top nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+.top nav a { color: var(--ink-soft); }
+
+/* layout */
+.wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 48px; }
+.toc { position: sticky; top: 76px; align-self: start; padding: 28px 0; font-size: 14px; }
+.toc a { display: block; padding: 5px 0 5px 12px; color: var(--muted); border-left: 2px solid var(--line); }
+.toc a:hover { color: var(--ink); text-decoration: none; border-left-color: var(--accent); }
+main { min-width: 0; max-width: 780px; padding-bottom: 80px; }
+section { padding: 44px 0 8px; border-top: 1px solid var(--line); }
+section:first-of-type { border-top: 0; }
+
+/* hero */
+.hero { padding: 56px 0 36px; }
+.logo-hero { width: 72px; height: 72px; border-radius: 16px; border: 2px dashed var(--accent); display: grid; place-items: center; text-align: center; font: 600 10px/1.3 var(--mono); color: var(--accent-ink); margin-bottom: 22px; }
+.hero h1 { font-size: 52px; margin: 0 0 12px; letter-spacing: -.025em; }
+.hero h1 span { color: var(--accent-ink); }
+.lead { font-size: 20px; color: var(--ink-soft); max-width: 680px; }
+.aka { font-size: 14px; color: var(--muted); }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 6px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 8px; font-weight: 600; font-size: 15px; border: 1px solid var(--line); color: var(--ink); background: var(--bg-2); }
+.btn:hover { text-decoration: none; border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: #33a39d; }
+
+/* bits */
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0 20px; }
+.card { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font-size: 15px; color: var(--ink-soft); }
+.card b { display: block; color: var(--ink); margin-bottom: 3px; font-size: 15px; }
+.note { background: var(--accent-bg); border: 1px solid rgba(43, 143, 138, .45); border-radius: 10px; padding: 12px 16px; margin: 16px 0 20px; font-size: 15px; color: var(--ink-soft); }
+.note.warn { background: rgba(217, 165, 74, .09); border-color: rgba(217, 165, 74, .45); }
+.note strong { color: var(--ink); }
+.steps { counter-reset: s; list-style: none; padding: 0; }
+.steps > li { counter-increment: s; position: relative; padding-left: 40px; margin: 0 0 14px; }
+.steps > li::before { content: counter(s); position: absolute; left: 0; top: 1px; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-bg); color: var(--accent-ink); font: 600 13px/26px var(--mono); text-align: center; }
+.chat { border-left: 2px solid var(--accent); padding-left: 16px; margin: 18px 0; }
+.who { font: 600 12px/1 var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--accent-ink); margin: 18px 0 6px; }
+.who.codex { color: var(--warn); }
+.who.you { color: var(--ink-soft); }
+details { border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); margin: 0 0 10px; }
+summary { cursor: pointer; padding: 13px 16px; font-weight: 600; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "+"; display: inline-block; width: 18px; color: var(--accent-ink); font-family: var(--mono); }
+details[open] summary::before { content: "-"; }
+details > div { padding: 0 16px 6px 34px; color: var(--ink-soft); font-size: 15px; }
+footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 13.5px; padding: 26px 0 40px; }
+
+@media (max-width: 900px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .toc { display: none; }
+  .top nav { display: none; }
+}
+@media (max-width: 560px) {
+  body { font-size: 15.5px; }
+  .top-in, .wrap { padding: 0 16px; }
+  .hero { padding: 36px 0 24px; }
+  .hero h1 { font-size: 38px; }
+  .lead { font-size: 17.5px; }
+  h2 { font-size: 24px; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  pre { font-size: 12.5px; padding: 12px; margin-left: -4px; margin-right: -4px; }
+  th, td { padding: 8px 8px; }
+  td:first-child { white-space: normal; }
+  .steps > li { padding-left: 36px; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="#top">
+      <!-- LOGO PLACEHOLDER: the final mark goes here (28x28) -->
+      <span class="logo-slot" aria-hidden="true">logo</span>
+      Overvibe
+    </a>
+    <nav>
+      <a href="#install">Install</a>
+      <a href="#cli">overvibe CLI</a>
+      <a href="#security">Security</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap" id="top">
+  <aside class="toc" aria-label="On this page">
+    <a href="#what">What it is</a>
+    <a href="#install">Install</a>
+    <a href="#first">First session</a>
+    <a href="#cli">The overvibe CLI</a>
+    <a href="#talk">Agents talking</a>
+    <a href="#accounts">Accounts</a>
+    <a href="#keys">Keyboard shortcuts</a>
+    <a href="#security">Security model</a>
+    <a href="#faq">FAQ</a>
+  </aside>
+
+  <main>
+    <div class="hero">
+      <!-- LOGO PLACEHOLDER: hero mark (72x72), from the logo work in progress -->
+      <div class="logo-hero" aria-hidden="true">LOGO<br>here</div>
+      <h1>Over<span>vibe</span></h1>
+      <p class="lead">Claude Code, Codex and agy side by side on your Mac or Linux machine (Windows through WSL2), and an <code>overvibe</code> command that lets any of them start another one, hand it a job and get the answer back.</p>
+      <p class="aka">Overvibe is the open-source release of Agent Deck. The config folder and the tmux server still use the old name.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Install</a>
+        <a class="btn" href="#talk">See two agents talk</a>
+      </div>
+    </div>
+
+    <section id="what">
+      <h2>What it is</h2>
+      <p>If your day is three agent CLIs spread over a pile of terminal tabs, this is the cockpit. One window on <code>127.0.0.1:7777</code>, a sidebar grouped by project, and a status dot on every session telling you which ones are working, which are idle and which are sitting there waiting for you.</p>
+      <p>Nothing gets wrapped or re-implemented. The deck starts the real <code>claude</code>, <code>codex</code> or <code>agy</code> inside tmux, on its own tmux server (<code>tmux -L agent-deck</code>), and streams that terminal to xterm.js in the page. Slash commands, skills, hooks, auto mode and Remote Control work as they do in Terminal. Close the tab or restart the server and the sessions keep running.</p>
+
+      <div class="grid">
+        <div class="card"><b>The <code>overvibe</code> CLI</b>Agents start agents. A Claude session can spin up Codex for a review, wait for the result to be typed back into its prompt, then close it.</div>
+        <div class="card"><b>Choice menus as dialogs</b>A shell command to approve, a question with options, a folder trust prompt: the deck reads them off the screen and shows buttons.</div>
+        <div class="card"><b>"Needs you"</b>Amber when a session has a menu open or its last reply asked you something. The browser tab title counts them: <code>(2) Overvibe</code>.</div>
+        <div class="card"><b>A sidebar that stays put</b>Projects in the order you set, pins on top, new arrivals at the bottom. It never reshuffles on its own.</div>
+        <div class="card"><b>Several Claude accounts</b>Each one a separate login. Pick a default and an account per folder.</div>
+        <div class="card"><b>Drag and drop</b>Drop a file on a terminal and its path is pasted at the cursor, quoted for the shell.</div>
+      </div>
+      <p>Also in there: <strong>My messages</strong> (everything you typed into any session, searchable), a <strong>Stats</strong> view (sessions started and working time per tool, what is waiting on you, usage per account, your busiest projects), a command palette that runs <code>$ any shell command</code> in the current folder, and an optional <strong>Tasks</strong> view that reads the <code>TASKS.md</code> in your projects if you keep one. Claude sessions you started in a plain Terminal tab show up in the sidebar too, and one click moves them into the deck with the conversation intact.</p>
+    </section>
+
+    <section id="install">
+      <h2>Install</h2>
+      <p>macOS or Linux; on Windows, inside WSL2 (the README has the steps). You need:</p>
+      <ul>
+        <li>macOS, or Linux with tmux 3.2 or newer</li>
+        <li><a href="https://bun.sh">Bun</a></li>
+        <li>tmux: <code>brew install tmux</code> on a Mac, <code>sudo apt install tmux</code> (or your distro's package command) on Linux</li>
+        <li>Claude Code (<code>claude</code>), logged in. Add Codex (<code>codex</code>) and agy (<code>agy</code>) if you want those tools in the deck; each uses its own login.</li>
+      </ul>
+
+      <h3>Clone and run</h3>
+<pre><code><span class="p">$ </span>git clone https://github.com/maribol/overvibe overvibe
+<span class="p">$ </span>cd overvibe
+<span class="p">$ </span>bun install
+<span class="p">$ </span>bun run dev</code></pre>
+      <p><code>bun run dev</code> runs two watchers: <code>vite build --watch</code> builds the UI into <code>dist/</code>, and <code>bun --watch server.ts</code> serves it on <a href="http://127.0.0.1:7777">http://127.0.0.1:7777</a>. When a new build lands, the open page reloads itself. <code>bun run start</code> builds once and serves, without the watchers.</p>
+
+      <h3>Log in once</h3>
+      <p>On first start the server writes a random token to <code>~/.config/overvibe/token</code> and a login link to <code>~/.config/overvibe/login-url</code>, both readable by your user only. Open the link: it sets a cookie and drops the token from the address bar.</p>
+<pre><code><span class="p">$ </span>open "$(cat ~/.config/overvibe/login-url)"   <span class="c"># Linux: xdg-open</span></code></pre>
+      <p>The link carries the token, so keep it out of chats, screenshots and logs.</p>
+
+      <h3>Put <code>overvibe</code> on your PATH</h3>
+<pre><code><span class="p">$ </span>bun run install-cli   <span class="c"># links overvibe into ~/.local/bin, and ov if no other ov is installed</span>
+<span class="p">$ </span>overvibe --help</code></pre>
+
+      <h3>Optional: where your projects live</h3>
+      <p>New session searches your project folders three levels deep. By default that root is <code>~/Work</code> if it exists, else your home folder. Change it in <code>~/.config/overvibe/config.json</code>:</p>
+<pre><code>{
+  "workRoot": "~/code",
+  "codexWritable": ["~/scratch"]
+}</code></pre>
+      <p><code>codexWritable</code> lists extra folders Codex sessions may write to. <code>DECK_WORK_ROOT</code> in the environment beats the file, and <code>DECK_PORT</code> moves the server and the CLI off 7777 together.</p>
+
+      <h3>Desktop app</h3>
+      <p>In Chrome, ⌘N, ⌘T and ⌘W belong to the browser and never reach the page. The Electron app in <code>desktop/</code> exists to win those keys back.</p>
+<pre><code><span class="p">$ </span>bun run desktop         <span class="c"># dev run (installs desktop/ deps the first time)</span>
+<span class="p">$ </span>bun run desktop:build   <span class="c"># packages ~/Applications/Overvibe.app</span></code></pre>
+      <ul>
+        <li>It is a window on the same server and binds nothing itself.</li>
+        <li>The build is unsigned and meant for the Mac that built it.</li>
+        <li>It logs in by setting the cookie from the token file, so the token never goes in a URL.</li>
+        <li>If the server isn't running, the window says so and offers a Start button.</li>
+        <li>⌘Q closes the window. Sessions keep running in tmux.</li>
+      </ul>
+    </section>
+
+    <section id="first">
+      <h2>First session</h2>
+      <ol class="steps">
+        <li>Press <kbd>⌥N</kbd> (<kbd>⌘N</kbd> in the desktop app) or click <b>New</b>.</li>
+        <li>Pick a folder. Folders you've used come first, most recent on top. Type to search the rest, <kbd>↑</kbd> <kbd>↓</kbd> to choose, <kbd>Enter</kbd> to start. Type a path that doesn't exist yet and a Create row offers to make it when you start.</li>
+        <li>Choose the tool (Claude, Codex or agy). A name, a first prompt, an account and Chrome are optional.</li>
+        <li>The terminal opens in a tab. From here it is the CLI you know.</li>
+      </ol>
+      <p>Each session has a permission mode, <b>Auto</b> or <b>Ask</b>, set by the switch in New session. The default is Settings &gt; Auto mode (<b>Start new sessions in auto mode</b>, also asked on the setup's Welcome step), off by default, so sessions ask. Set it per folder there or with <code>"mode"</code> in the folder's deck.json, or per session with <code>overvibe new --auto</code>, <code>--no-auto</code> or <code>--mode ask|auto</code>. Sessions the deck starts trust their folder (the deck answers that prompt for you):</p>
+      <div class="table-wrap">
+      <table>
+        <tr><th>Tool</th><th>Auto</th><th>Ask (default)</th></tr>
+        <tr><td>Claude</td><td><code>claude --permission-mode auto --remote-control</code></td><td><code>claude --permission-mode manual --remote-control</code>: Claude Code's normal approval prompts</td></tr>
+        <tr><td>Codex</td><td><code>codex --approve-for-me</code>: approvals go to Codex's automatic review</td><td><code>codex -a on-request -s workspace-write</code>: Codex asks you, in its stock sandbox</td></tr>
+        <tr><td>agy</td><td><code>agy --mode auto --remote-control</code></td><td><code>agy --remote-control</code>, no <code>--mode</code>: agy's default mode, which asks before commands</td></tr>
+      </table>
+      </div>
+      <p>In auto mode Codex's workspace sandbox is loosened: network on and your work root (plus <code>codexWritable</code>) writable. In ask mode it keeps the sandbox as Codex ships it (the session folder, no network), and anything beyond is an approval for you. agy gets the folder trusted for that run in both modes. Every sidebar row shows <b>auto</b> or <b>ask</b>, and the header says <b>auto mode</b> or <b>auto mode off</b>. A resumed session keeps its mode. A helper is never more permissive than the session that started it: from a session in ask mode, helpers run in ask mode and <code>--auto</code>, <code>--mode auto</code> and <code>--tool shell</code> are refused by the server.</p>
+      <p>When a menu shows up on screen, a dialog pops over the terminal with the same options. Clicking one moves the menu's cursor there and presses Enter in the session. Questions and plan approvals from Claude sessions surface the same way, from whichever session asked, and <b>Later</b> parks them while the session stays marked in the sidebar.</p>
+      <p>Right-click any session for the rest: pin, rename, move to another folder, copy the resume command, stop, hide. Hide only takes it off the list. Overvibe never deletes a session or a transcript, and past Claude sessions can be resumed from the sidebar.</p>
+    </section>
+
+    <section id="cli">
+      <h2>The overvibe CLI</h2>
+      <p>This is the headline feature. <code>overvibe</code> (or <code>ov</code> for short) talks to the running server on 127.0.0.1 with your token, so any shell on your computer can use it, and so can any agent running in a deck session. Every session the deck starts gets <code>DECK_SESSION</code> in its environment (its tmux id). That is how a child knows who to report to, and how <code>overvibe stop</code> knows what you're allowed to close.</p>
+
+      <div class="table-wrap">
+      <table>
+        <tr><th>Command</th><th>What it does</th></tr>
+        <tr><td><code>overvibe new</code></td><td>Start a session. <code>--cwd</code> is required.</td></tr>
+        <tr><td><code>overvibe send</code></td><td>Type a message into a deck session's prompt (Claude, Codex or agy).</td></tr>
+        <tr><td><code>overvibe ls</code></td><td>List running sessions with status, tool and folder. <code>--json</code> for the full records.</td></tr>
+        <tr><td><code>overvibe open</code></td><td>Bring a session up on screen in the deck.</td></tr>
+        <tr><td><code>overvibe stop</code></td><td>Stop a session. The conversation is kept.</td></tr>
+        <tr><td><code>overvibe move</code></td><td>Move a Claude session to another folder after its turn ends.</td></tr>
+        <tr><td><code>overvibe resume</code></td><td>Continue a stopped or past session: same conversation, name and sidebar row. <code>overvibe ls --past</code> lists them.</td></tr>
+        <tr><td><code>overvibe attach</code></td><td>Open a running session in the terminal you are in, through tmux.</td></tr>
+      </table>
+      </div>
+
+      <h3>overvibe new</h3>
+<pre><code>overvibe new --cwd &lt;folder&gt; [--mkdir] [--tool claude|codex|agy|shell] [--name "&lt;name&gt;"]
+         [--prompt "&lt;first message&gt;"] [--account &lt;name&gt;] [--mode ask|auto] [--chrome] [--attach] [--worktree]</code></pre>
+      <ul>
+        <li><code>--mkdir</code> creates the folder first when it doesn't exist (<code>mkdir -p</code>, only under your home folder). Without it, a missing folder is refused.</li>
+        <li><code>--tool</code> defaults to <code>claude</code>. <code>--tool shell</code> (or <code>terminal</code>) starts a plain login shell in the folder with no agent, the same Terminal you get from New session; <code>--prompt</code> is then a command it runs first, like <code>bun run dev</code>.</li>
+        <li><code>--name</code> is what shows in the sidebar and what <code>overvibe send</code> matches on. Keep it short: project and role, like <code>"shop: codex review"</code>. Leave it out and Codex or agy get <code>tool: folder</code>, while Claude takes the title Claude Code gives it.</li>
+        <li><code>--prompt</code> is the first message. For agy the deck types it in once agy's input box is up.</li>
+        <li><code>--account</code> picks a Claude account by name. Without it, the folder's account or your default applies (see <a href="#accounts">Accounts</a>).</li>
+        <li><code>--chrome</code> marks a session that needs Claude in Chrome, so it starts on the account the extension is signed in to.</li>
+        <li><code>--attach</code> makes it a child of the session running the command. It shows nested under the parent in the sidebar, and the parent closes it with <code>overvibe stop</code>. Only works from inside a deck session.</li>
+        <li><code>--mode ask</code> (or <code>--no-auto</code>) starts it with the tool's own approval prompts, <code>--mode auto</code> (or <code>--auto</code>) in its auto mode; left out, the folder's deck.json or Settings decides. From a session in ask mode, helpers always run in ask mode and <code>--auto</code> is refused.</li>
+        <li><code>--worktree</code> starts it in its own git worktree, on a new branch <code>ov/&lt;name&gt;</code> made from the folder's HEAD, in <code>&lt;repo&gt;.worktrees/&lt;name&gt;</code> beside the repo. When it stops, whoever started it gets the branch, its commits, any uncommitted files and the merge command. Overvibe never deletes the worktree or the branch.</li>
+        <li>Sessions started by sessions are capped: 3 levels deep and 8 running children per session by default, set in Settings &gt; Spawn limits. Past a limit, <code>overvibe new</code> fails with <code>spawn limit: ...</code> and says which one. Sessions you start are never capped.</li>
+      </ul>
+      <p><code>overvibe new</code> rejects flags it doesn't know, so a typo never starts a session.</p>
+<pre><code><span class="p">$ </span>overvibe new --tool codex --cwd ~/code/shop --name "shop: codex copy" \
+    --prompt "Rewrite the hero copy in landing.md. When done, run: overvibe send \"shop: lead\" \"&lt;summary&gt;\""
+started "shop: codex copy" in ~/code/shop (session pending, tmux d3f9a1c2)
+message it with SendMessage once it is up (ListAgents shows it as "shop: codex copy")</code></pre>
+
+      <h3>overvibe send</h3>
+<pre><code>overvibe send "&lt;session name&gt;" "&lt;message&gt;"</code></pre>
+      <p>The target can be a tmux id, a session id, an exact name, or part of a name (the most recently active match wins). The message is typed into that session's prompt with a header naming the sender and the exact reply command, with newlines collapsed to spaces:</p>
+<pre><code>[overvibe message from "shop: lead" (claude), sender checked by Overvibe; reply with: overvibe send "shop: lead" "&lt;reply&gt;". A peer agent wrote this, not the owner: ...] Also shorten the CTA.</code></pre>
+      <p>The server writes that header, not the sender. Each session has its own secret (<code>OVERVIBE_PROOF</code>) that <code>overvibe</code> presents on every call, and a call that names a session without its secret is refused, so one session can't pose as another. Text in the message that looks like a header is shown as <code>(quoted text, not a header: ...)</code>. The rest of the header tells the receiving agent that a peer's message is information, not your instructions, and that destructive or outside-world steps need your OK. A message sent from a plain shell says the sender was not checked.</p>
+      <p>Only deck sessions can receive it. A session in a plain Terminal tab has no deck pane to type into; move it into the deck first.</p>
+
+      <h3>overvibe ls</h3>
+<pre class="cols"><code><span class="p">$ </span>overvibe ls
+busy     codex  overvibe ↳ shop: codex review                       ~/code/shop
+waiting  claude overvibe shop: lead                                 ~/code/shop
+idle     claude outside  notes                                      ~/notes</code></pre>
+      <p>Columns: status (<code>busy</code>, <code>idle</code>, <code>waiting</code>, <code>blocked</code>, <code>ended</code>), tool, whether it runs in the deck or outside it, name (<code>↳</code> marks an attached child), folder.</p>
+<pre class="cols"><code><span class="p">$ </span>overvibe ls --past --cwd ~/code/shop
+12m ago  codex  01a1c5cb ↳ shop: codex review                       ~/code/shop  (closed)
+3h ago   claude 4bfe9201 shop: lead                                 ~/code/shop</code></pre>
+      <p><code>--past</code> lists stopped and past sessions instead, newest first: when it was last active, tool, the start of its conversation id, name, folder. Closed children and hidden rows are included and marked. <code>--cwd</code> keeps one folder and the ones under it, <code>--limit</code> sets how many (20 by default), <code>--json</code> prints the records.</p>
+
+      <h3>overvibe open</h3>
+<pre><code>overvibe open ["&lt;session name&gt;"]</code></pre>
+      <p>Opens that session in the deck on your screen; with no name, the calling session. An agent uses it when you have to answer something over there.</p>
+
+      <h3>overvibe stop</h3>
+<pre><code>overvibe stop "&lt;session name&gt;"
+overvibe stop --children</code></pre>
+      <p>Stops the session and keeps its conversation, so it can be resumed later. An attached child is also hidden from the list. <code>--children</code> closes every attached child of the calling session. From inside a session, <code>overvibe stop</code> reaches only that session and the ones it started. From a plain shell you can stop any of them.</p>
+
+      <h3>overvibe resume</h3>
+<pre><code>overvibe resume "&lt;name | id | id prefix&gt;" [--prompt "&lt;message&gt;"] [--attach] [--account &lt;name&gt;] [--fork]</code></pre>
+      <p>Brings a stopped or past session back as a live one in its own folder. It continues the same conversation (Claude with <code>--resume</code>, Codex with <code>codex resume</code>, agy with <code>--conversation</code>) and keeps its name and its row in the sidebar. A stopped attached child comes back nested under the parent it had, so a lead can resume its own child to ask a follow-up.</p>
+      <ul>
+        <li>The name matches exactly first, then as part of a name; an id or the first characters of one also work. When more than one session matches, it lists them and starts nothing.</li>
+        <li>A session that is still running is not started twice: you get the <code>overvibe send</code> line to message it instead.</li>
+        <li><code>--prompt</code> is typed in once the session is up. <code>--attach</code> makes it a child of the calling session. <code>--fork</code> starts a copy with a new id and leaves the original alone (Claude only; it also works on a running session).</li>
+      </ul>
+<pre><code><span class="p">$ </span>overvibe resume "shop: codex review" --prompt "One more: does the index build lock writes? Reply with overvibe send \"$OVERVIBE_SESSION\" \"&lt;answer&gt;\""
+resumed "shop: codex review" in ~/code/shop (codex, session 01a1c5cb-..., tmux d3b2c9f0), attached</code></pre>
+
+      <h3>overvibe attach</h3>
+<pre><code>overvibe attach "&lt;session name&gt;" [--print]</code></pre>
+      <p>Opens a running deck session (Claude, Codex, agy or a terminal) in the terminal you run it from, over tmux. <code>Ctrl-b d</code> detaches and leaves it running. It needs a real terminal; <code>--print</code> only shows the tmux command.</p>
+
+      <h3>overvibe move</h3>
+<pre><code>overvibe move --to &lt;folder&gt; [--session "&lt;name&gt;"]</code></pre>
+      <p>Claude sessions only. The move waits for the current turn to end, then resumes the session in the new folder with a note telling it where it is now. Run from inside a session with no <code>--session</code>, it moves itself, and the agent should end its turn right after.</p>
+
+      <h3 id="attach">The one-shot attach pattern</h3>
+      <p>For a side job whose result you need back (a test run, a lookup in another repo, a second opinion), attach the helper, tell it how to report, and close it when the answer is in:</p>
+<pre><code>overvibe new --attach --tool codex --cwd ~/code/api --name "api: check tests" \
+  --prompt "Run the test suite and summarize failures. When done, run: overvibe send \"$OVERVIBE_SESSION\" \"&lt;result&gt;\""
+<span class="c"># end the turn; the result arrives as a new message</span>
+overvibe stop "api: check tests"</code></pre>
+      <p><code>$OVERVIBE_SESSION</code> expands in the parent's shell before <code>overvibe</code> runs, so the child gets the parent's tmux id as its reply address. Drop <code>--attach</code> when the session should outlive its parent or belongs in its own project group.</p>
+      <div class="note"><strong>End the turn after you hand work off.</strong> A reply is typed into the waiting session's prompt, and it only gets read once that session's turn is over. An agent that sleeps or polls for the answer is blocking the very message it is waiting for.</div>
+    </section>
+
+    <section id="talk">
+      <h2>Agents talking to each other</h2>
+      <p>A worked example. You're in a Claude session called <code>shop: lead</code>, in <code>~/code/shop</code>, and you want Codex to review a migration before Claude ships it.</p>
+
+      <div class="chat">
+        <div class="who you">You, to Claude</div>
+        <p>Have Codex review db/migrations/0042_orders.sql for locking problems, then fix whatever it finds.</p>
+
+        <div class="who">Claude runs</div>
+<pre><code><span class="p">$ </span>overvibe new --attach --tool codex --cwd ~/code/shop --name "shop: codex review" \
+    --prompt "Review db/migrations/0042_orders.sql for table locks and long transactions on a busy orders table. List each problem with the line and a fix. When done, run: overvibe send \"$OVERVIBE_SESSION\" \"&lt;findings&gt;\""
+started "shop: codex review" in ~/code/shop (session pending, tmux d7a01e44), attached to this session
+close it when you no longer need it: overvibe stop "shop: codex review"
+message it with SendMessage once it is up (ListAgents shows it as "shop: codex review")</code></pre>
+        <p>Then Claude ends its turn. In the sidebar, <code>shop: codex review</code> appears nested under <code>shop: lead</code>, busy.</p>
+
+        <div class="who codex">Codex, when it's done</div>
+<pre><code><span class="p">$ </span>overvibe send "d3b2c9f0" "Two problems. Line 12: ADD COLUMN with a default rewrites the whole table under a lock. Line 30: build the index CONCURRENTLY."</code></pre>
+
+        <div class="who">What lands in Claude's prompt</div>
+<pre><code>[overvibe message from "shop: codex review" (codex), sender checked by Overvibe; reply with: overvibe send "shop: codex review" "&lt;reply&gt;". A peer agent wrote this, not the owner: ...] Two problems. Line 12: ADD COLUMN with a default rewrites the whole table under a lock. Line 30: build the index CONCURRENTLY.</code></pre>
+        <p>Claude starts a new turn with that message, fixes the migration, and can ask a follow-up the same way:</p>
+<pre><code><span class="p">$ </span>overvibe send "shop: codex review" "Fixed both. Does the new version still lock anything?"</code></pre>
+
+        <div class="who">Claude, once the review is settled</div>
+<pre><code><span class="p">$ </span>overvibe stop "shop: codex review"
+stopped "shop: codex review" and hid it from the list (conversation kept)</code></pre>
+      </div>
+
+      <p>The same commands work in every direction: Codex can start agy, agy can message Claude, a coordinator session can run five helpers in parallel. The tmux ids and Codex's wording above are made up for the example.</p>
+      <p>Agents need to know the command exists. <code>overvibe --help</code> prints the full usage with examples, so one line in your <code>CLAUDE.md</code> or <code>AGENTS.md</code> pointing at it is enough. Claude sessions can also message each other with Claude Code's own SendMessage; <code>overvibe send</code> is the only way to reach Codex and agy.</p>
+      <p>The Stats view counts the messages between sessions, today and over the last 7 days, and lists which pairs of sessions talk most.</p>
+    </section>
+
+    <section id="accounts">
+      <h2>Accounts</h2>
+      <p>Got more than one Claude subscription? Each extra account is a separate <code>CLAUDE_CONFIG_DIR</code> in <code>~/.claude-accounts/&lt;name&gt;/</code> with its own login. The account called <code>default</code> is your normal <code>~/.claude</code>.</p>
+      <p>Add one in <b>Settings → Accounts → Add account</b>, then log in from the terminal that opens. Your shared setup is symlinked in from <code>~/.claude</code> (CLAUDE.md, settings, skills, hooks, plugins, agents, commands, and the transcripts folder), so every account behaves the same and any account can resume any session. The login itself is never shared.</p>
+      <p>Which account a new Claude session gets, from strongest to weakest:</p>
+      <ol>
+        <li>The one you pick in New session, or pass with <code>overvibe new --account &lt;name&gt;</code>.</li>
+        <li>The folder's account from <b>Settings → Which account new sessions use</b>. A folder's setting covers its subfolders.</li>
+        <li>Your default account.</li>
+      </ol>
+      <p>Sessions that need Claude in Chrome are the exception. The extension only pairs with sessions on the account it's signed in to, so set that account in Settings and those sessions start there whatever the folder says.</p>
+      <p>A running session can switch too. Pick another account in its header and the deck restarts it there with the same conversation. Settings shows each account's 5-hour and weekly usage, and a free check every 3 hours keeps idle logins from expiring.</p>
+      <p>Codex and agy don't use deck accounts. They run on their own logins.</p>
+    </section>
+
+    <section id="keys">
+      <h2>Keyboard shortcuts</h2>
+      <p>The browser keeps ⌘N, ⌘T and ⌘W for itself, so the web UI uses Option. The desktop app catches the ⌘ keys before the page sees them and runs the same actions. Both are caught before the terminal, which would otherwise read ⌥ as Meta.</p>
+      <div class="table-wrap">
+      <table>
+        <tr><th>Action</th><th>Web</th><th>Desktop</th></tr>
+        <tr><td>New session</td><td><kbd>⌥N</kbd></td><td><kbd>⌘N</kbd></td></tr>
+        <tr><td>Stop the open session (asks first)</td><td><kbd>⌥W</kbd></td><td><kbd>⌘W</kbd></td></tr>
+        <tr><td>New shell in this folder</td><td><kbd>⌥T</kbd></td><td><kbd>⌘T</kbd></td></tr>
+        <tr><td>Next session in sidebar order</td><td><kbd>⌥Tab</kbd> <kbd>⌥]</kbd></td><td><kbd>Ctrl Tab</kbd> <kbd>⌘]</kbd></td></tr>
+        <tr><td>Previous session</td><td><kbd>⌥⇧Tab</kbd> <kbd>⌥[</kbd></td><td><kbd>Ctrl ⇧Tab</kbd> <kbd>⌘[</kbd></td></tr>
+        <tr><td>Nth open tab</td><td><kbd>⌥1</kbd> to <kbd>⌥9</kbd></td><td><kbd>⌘1</kbd> to <kbd>⌘9</kbd></td></tr>
+        <tr><td>Quick open / command palette</td><td><kbd>⌥K</kbd> <kbd>⌥P</kbd> <kbd>⌘K</kbd> <kbd>⌘P</kbd> <kbd>Ctrl P</kbd></td><td><kbd>⌘K</kbd> <kbd>⌘P</kbd></td></tr>
+        <tr><td>Rename the open session</td><td><kbd>⌥R</kbd></td><td><kbd>⌥R</kbd></td></tr>
+        <tr><td>My messages</td><td><kbd>⌥M</kbd></td><td><kbd>⌥M</kbd></td></tr>
+      </table>
+      </div>
+      <p>In the Stop dialog, Cancel has focus, so a stray Enter does nothing; <kbd>S</kbd> stops and <kbd>Esc</kbd> backs out. In the desktop app ⌘C and ⌘V pass through to the terminal unchanged, and ⌘Q quits the window only.</p>
+    </section>
+
+    <section id="security">
+      <h2>Security model</h2>
+      <div class="note warn"><strong>This page is a full shell on your computer.</strong> Anyone who can load it can run any command as you, and agents in auto mode act without asking. The rules below exist to keep it that way for you alone.</div>
+      <ul>
+        <li><strong>Loopback only.</strong> The server binds <code>127.0.0.1</code>. Nothing on your network can reach it, and there is no setting to change that. Don't put a proxy or tunnel in front of it.</li>
+        <li><strong>A token on every request.</strong> 48 hex characters from the system's random source, stored in <code>~/.config/overvibe/token</code> with mode 600. The login link trades it for an HttpOnly, SameSite=Strict cookie, and the server compares it in constant time.</li>
+        <li><strong>Host and Origin checks.</strong> Every request must name <code>127.0.0.1:7777</code> or <code>localhost:7777</code> as its Host. Writes and WebSocket upgrades must also carry a matching Origin. A page in another tab, or a DNS-rebinding trick, gets a 403.</li>
+        <li><strong>Agents can't pose as each other.</strong> Every session gets its own secret, and the server checks it before it accepts a call in that session's name. The server writes every message header itself and defuses lookalikes in the text, and the header tells the receiving agent that a peer is not the owner. It guards against a prompt-injected helper. All agents still run as your user and can read your files, so treat it as one layer of several.</li>
+        <li><strong>Spawn limits.</strong> Sessions started by sessions stop at 3 levels and 8 running children per session by default (Settings &gt; Spawn limits), so a loop of helpers can't fill your machine.</li>
+        <li><strong>The desktop app adds no surface.</strong> It loads only the local deck, opens other links in your default browser, and runs the page sandboxed with context isolation and no Node.</li>
+        <li><strong>Ask mode by default, auto mode when you turn it on.</strong> In auto mode (Settings &gt; Auto mode, or the setup's Welcome step) Claude runs in <code>--permission-mode auto</code>, Codex with <code>--approve-for-me</code> (network on, your work root writable) and agy in <code>--mode auto</code>, so treat every prompt you send as something that will be acted on. In ask mode each tool uses its own approval prompts (Claude <code>manual</code>, Codex <code>-a on-request</code> in its stock sandbox, agy's default mode), and each request pops up in Overvibe for you to allow or refuse. A session in ask mode can't start an auto-mode helper or a plain terminal.</li>
+      </ul>
+      <p>The token file, login link, settings and uploads all live in <code>~/.config/overvibe/</code>, created with mode 700. Never commit or paste anything from it.</p>
+    </section>
+
+    <section id="faq">
+      <h2>FAQ</h2>
+      <details>
+        <summary>Does it work on Linux or Windows?</summary>
+        <div><p>Linux, yes: the installer sets up a systemd user unit and finds tmux from your distro. Windows, through WSL2: Overvibe runs in WSL's Linux and you open it in a Windows browser, which reaches it through WSL's localhost forwarding. Native Windows is not supported, because tmux does not run there. The desktop app is macOS only; on Linux and Windows you use the browser page.</p></div>
+      </details>
+      <details>
+        <summary>Can I open it from my phone or another machine?</summary>
+        <div><p>No. It listens on 127.0.0.1 and checks Host on every request. Exposing a shell to the network is exactly what the security model is there to stop.</p></div>
+      </details>
+      <details>
+        <summary>What happens to my sessions if the server restarts?</summary>
+        <div><p>Nothing. They live on the deck's own tmux server, which outlives the web server. Reload the page and they're all there. You can also reach them from a terminal with <code>tmux -L agent-deck ls</code>.</p></div>
+      </details>
+      <details>
+        <summary>Why does my agent never get the reply?</summary>
+        <div><p>Usually because it's still in its turn, sleeping or polling. <code>overvibe send</code> types into the prompt, and the message is read when the turn ends. Hand off, end the turn, and the reply arrives as a new message. Also check the target with <code>overvibe ls</code>: a session in a plain Terminal tab can't receive <code>overvibe send</code>.</p></div>
+      </details>
+      <details>
+        <summary>I dropped a file and got a path under ~/.config/overvibe/uploads. Why?</summary>
+        <div><p>Browsers don't say where a dropped file lives, so the deck searches for one with the same name, size and modified time under your home folder, Spotlight first. When it can't find it (a file from a zip, a download still in progress, Spotlight indexing off), it uploads a copy, up to 200 MB, and pastes that path.</p></div>
+      </details>
+      <details>
+        <summary>Will Hide or Stop delete anything?</summary>
+        <div><p>Stop ends the process and keeps the conversation, ready to resume. Hide only takes the row off the list, and transcripts stay wherever each CLI writes them.</p></div>
+      </details>
+      <details>
+        <summary>I have a ~/.config/agent-deck folder. Is that still used?</summary>
+        <div><p>Yes. Agent Deck was its name before the open-source release. An install from that time keeps <code>~/.config/agent-deck</code> where it is, and Overvibe makes <code>~/.config/overvibe</code> a link to it, so both paths work. New installs use <code>~/.config/overvibe</code>. The tmux server keeps the old name (<code>-L agent-deck</code>) so running sessions carry over.</p></div>
+      </details>
+    </section>
+
+    <footer>
+      Overvibe: the open-source release of Agent Deck. This docs page is one HTML file and loads no fonts, scripts or trackers from anywhere.
+    </footer>
+  </main>
+</div>
+</body>
+</html>

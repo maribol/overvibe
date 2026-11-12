@@ -1,0 +1,387 @@
+@import 'tailwindcss';
+
+/* ----------------------------------------------------------------------------
+   Overvibe theme: every colour lives in this file. Components use the tokens
+   (bg-surface, text-muted, var(--color-st-busy), the .side-row / .dot classes
+   below), never hex values.
+
+   Dark is the default and the design: the terminal is always dark, so the
+   sidebar, header and dialogs sit on the same graphite as the terminal and the
+   page reads as one surface. Light is the opt-in alternative (⌘K "Switch to
+   light mode"); it keeps the same structure with a darker accent for contrast.
+
+   Accent: deep teal, one token (--color-accent). Used only where it means
+   something: the primary button, the logo, focus, and the "working" pulse.
+   Selection is a neutral raised fill, no coloured bar.
+
+   Status (one hue each, never shared with the accent elsewhere):
+     working   teal, breathing         --color-st-busy
+     needs you amber, with a soft halo  --color-st-wait
+     idle      solid grey              --color-st-idle
+     blocked   red                     --color-st-blocked
+     stopped   hollow grey ring        --color-st-stop
+   Hairline borders, no drop shadows except on floating menus and dialogs.
+---------------------------------------------------------------------------- */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Accent: ONE token. Swap --color-accent and everything follows (the scale is mixed from it).
+     Deep teal: calm for all-day use, readable on graphite and on white, and far from the status
+     amber. 600 is the accent as text/icon colour (lighter on dark, darker on light). */
+  --color-accent: #2b8f8a;
+  --color-brand-200: color-mix(in oklab, var(--color-accent) 25%, transparent);
+  --color-brand-300: color-mix(in oklab, var(--color-accent), white 45%);
+  --color-brand-400: color-mix(in oklab, var(--color-accent), white 22%);
+  --color-brand-500: var(--color-accent);
+  /* logo: two-tone on dark, one color on light */
+  --logo-ring: #2b8f8a;
+  --logo-arc: #8fd3c9;
+  --color-brand-600: color-mix(in oklab, var(--color-accent), white 30%);
+  --color-brand-700: color-mix(in oklab, var(--color-accent), black 18%);
+  --color-on-brand: #ffffff;
+
+  /* Neutrals: cool graphite, same family as the terminal */
+  --color-ink: #eceef2;
+  --color-ink-soft: #c2c5ce;
+  --color-muted: #9094a0;
+  --color-faint: #6a6e7a;
+  --color-line: #23252c;
+  --color-line-strong: #30333b;
+  --color-surface: #131418;
+  --color-canvas: #101114;
+  --color-canvas-2: #1c1e24;
+  --color-shell: #0b0c0e;
+
+  /* Rows in lists (sidebar, palette, menus) */
+  --color-row-hover: #1a1c21;
+  --color-row-sel: #1f2127;
+
+  /* The terminal: always dark, in both themes */
+  --color-term: #101114;
+  --color-term-fg: #e4e6eb;
+  --color-term-sel: #24474a;
+
+  /* Session status */
+  --color-st-busy: #3fb8b0;
+  --color-st-wait: #f5a524;
+  --color-st-idle: #8a8f9b;
+  --color-st-blocked: #ff6b6b;
+  --color-st-stop: #4a4e59;
+  --color-danger: #ff6b6b;
+
+  /* Chips: dark tints with bright text */
+  --color-chip-green-bg: #14261c;
+  --color-chip-green-fg: #6fdc9c;
+  --color-chip-amber-bg: #2c2210;
+  --color-chip-amber-fg: #ffb340;
+  --color-chip-red-bg: #301719;
+  --color-chip-red-fg: #ff7b7b;
+  --color-chip-blue-bg: #16213a;
+  --color-chip-blue-fg: #8fb4ff;
+  --color-chip-violet-bg: #231d3b;
+  --color-chip-violet-fg: #b9adff;
+  --color-chip-gray-bg: #22242a;
+  --color-chip-gray-fg: #a8acb7;
+  --color-chip-accent-bg: color-mix(in oklab, var(--color-accent) 18%, transparent);
+  --color-chip-accent-fg: color-mix(in oklab, var(--color-accent), white 35%);
+
+  --radius-md: 6px;
+  --radius-lg: 7px;
+  --radius-xl: 10px;
+  --radius-2xl: 14px;
+}
+
+/* Light: opt-in. Cool off-white neutrals; the accent goes darker where it is text. */
+:root[data-theme='light'] {
+  --logo-ring: #1d6f6b;
+  --logo-arc: #1d6f6b;
+  --color-brand-600: color-mix(in oklab, var(--color-accent), black 22%);
+  --color-on-brand: #ffffff;
+
+  --color-ink: #14151a;
+  --color-ink-soft: #3a3d46;
+  --color-muted: #686c78;
+  --color-faint: #959aa5;
+  --color-line: #e6e7eb;
+  --color-line-strong: #d7d9df;
+  --color-surface: #ffffff;
+  --color-canvas: #f7f7f9;
+  --color-canvas-2: #eeeff2;
+  --color-shell: #e8e9ed;
+  --color-row-hover: #f1f2f5;
+  --color-row-sel: #e9eaee;
+
+  --color-st-busy: #1f8f88;
+  --color-st-wait: #d98300;
+  --color-st-idle: #9a9ea8;
+  --color-st-blocked: #d83a3a;
+  --color-st-stop: #b8bbc4;
+  --color-danger: #d83a3a;
+
+  --color-chip-green-bg: #e5f5eb;
+  --color-chip-green-fg: #1d7543;
+  --color-chip-amber-bg: #fdf0db;
+  --color-chip-amber-fg: #a65c00;
+  --color-chip-red-bg: #fdeaea;
+  --color-chip-red-fg: #c23232;
+  --color-chip-blue-bg: #e7effd;
+  --color-chip-blue-fg: #2b5cb3;
+  --color-chip-violet-bg: #efecfe;
+  --color-chip-violet-fg: #5a45e8;
+  --color-chip-gray-bg: #f0f1f3;
+  --color-chip-gray-fg: #50535c;
+  --color-chip-accent-bg: color-mix(in oklab, var(--color-accent) 12%, white);
+  --color-chip-accent-fg: color-mix(in oklab, var(--color-accent), black 25%);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--color-brand-500) 30%, transparent);
+  }
+  h1, h2, h3, h4 {
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer components {
+  /* Card — hairline border, NO shadow */
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-xl);
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    line-height: 1;
+    border-radius: var(--radius-lg);
+    padding: 0.625rem 1rem;
+    cursor: pointer;
+    transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.06s ease;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    user-select: none;
+  }
+  .btn:active { transform: translateY(0.5px); }
+  .btn-primary { background: var(--color-ink); color: var(--color-surface); }
+  .btn-primary:hover { background: var(--color-ink-soft); }
+  .btn-brand { background: var(--color-brand-500); color: var(--color-on-brand); }
+  .btn-brand:hover { background: var(--color-brand-400); }
+  /* destructive confirm (Stop): red outline that fills on hover, so it never looks like the default */
+  .btn-danger { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 45%, transparent); }
+  .btn-danger:hover { background: var(--color-danger); color: var(--color-on-brand); }
+  .btn-ghost { background: transparent; color: var(--color-ink); border-color: var(--color-line-strong); }
+  .btn-ghost:hover { background: var(--color-canvas-2); border-color: var(--color-faint); }
+  .btn-soft { background: var(--color-canvas-2); color: var(--color-ink-soft); }
+  .btn-soft:hover { background: var(--color-line); }
+  .btn:focus-visible { outline: 2px solid var(--color-brand-500); outline-offset: 2px; }
+  .btn-sm { padding: 0.4rem 0.7rem; font-size: 0.8125rem; border-radius: var(--radius-md); }
+  .btn-lg { padding: 0.85rem 1.4rem; font-size: 0.95rem; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Inputs */
+  .input {
+    width: 100%;
+    background: var(--color-canvas);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-lg);
+    padding: 0.625rem 0.85rem;
+    font-size: 0.9rem;
+    color: var(--color-ink);
+    outline: none;
+    transition: border-color 0.14s ease, background 0.14s ease;
+  }
+  .input::placeholder { color: var(--color-faint); }
+  .input:focus { border-color: var(--color-brand-500); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 18%, transparent); }
+  select.input { background-color: var(--color-canvas-2); }
+
+  /* Chip */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.28rem 0.6rem;
+    border-radius: 7px;
+    line-height: 1.15;
+  }
+
+  /* Custom checkbox — rounded square, ink when checked */
+  input[type='checkbox'] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 19px;
+    height: 19px;
+    border: 1.5px solid var(--color-line-strong);
+    border-radius: 6px;
+    background: var(--color-surface);
+    cursor: pointer;
+    position: relative;
+    flex: none;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  input[type='checkbox']:hover {
+    border-color: var(--color-faint);
+  }
+  input[type='checkbox']:checked {
+    background: var(--color-brand-500);
+    border-color: var(--color-brand-500);
+  }
+  input[type='checkbox']:checked::after {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 2.5px;
+    width: 5px;
+    height: 9px;
+    border: solid var(--color-on-brand);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+
+  /* Sidebar nav item */
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--radius-lg);
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--color-ink-soft);
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .nav-item:hover { background: var(--color-canvas-2); }
+  .nav-item.active { background: var(--color-canvas-2); color: var(--color-ink); font-weight: 600; }
+
+  /* a dialog or floating menu: the card, lifted off the page */
+  .dialog {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-xl);
+    box-shadow: 0 24px 60px -12px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(0 0 0 / 0.2);
+  }
+  :root[data-theme='light'] .dialog { box-shadow: 0 24px 60px -16px rgb(20 21 26 / 0.25); }
+  /* v-tip [T1112-126]: the hover card (src/web/tip.ts) */
+  .vtip { position: fixed; z-index: 80; width: max-content; min-width: 180px; max-width: 360px; padding: 8px 11px; font-size: 12px; line-height: 1.45; pointer-events: none; border-radius: var(--radius-lg, 10px); }
+  .vtip-title { font-weight: 600; color: var(--color-ink); }
+  .vtip-line { color: var(--color-ink-soft); }
+  .vtip-row { display: flex; gap: 14px; justify-content: space-between; color: var(--color-ink-soft); }
+  .vtip-label { flex: none; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vtip-num { min-width: 0; text-align: right; font-variant-numeric: tabular-nums; color: var(--color-ink); }
+  .vtip-title + .vtip-row, .vtip-title + .vtip-line { margin-top: 4px; }
+  .vtip-foot { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--color-line); color: var(--color-faint); }
+  .backdrop { background: rgb(5 6 8 / 0.6); backdrop-filter: blur(2px); }
+  :root[data-theme='light'] .backdrop { background: rgb(20 21 26 / 0.3); }
+
+  /* A sidebar row. Selected: a raised neutral fill across the row, no bar. Needs you: a faint amber wash. */
+  .side-row {
+    position: relative;
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 5px;
+    padding: 5px 10px;
+    text-align: left;
+    color: var(--color-ink-soft);
+    transition: background 0.1s ease, color 0.1s ease;
+  }
+  .side-row:hover { background: var(--color-row-hover); color: var(--color-ink); }
+  .side-row.is-wait { background: color-mix(in srgb, var(--color-st-wait) 9%, transparent); color: var(--color-ink); }
+  .side-row.is-wait:hover { background: color-mix(in srgb, var(--color-st-wait) 14%, transparent); }
+  .side-row.is-err { background: color-mix(in srgb, var(--color-danger) 9%, transparent); color: var(--color-ink); }
+  .side-row.is-err:hover { background: color-mix(in srgb, var(--color-danger) 14%, transparent); }
+  /* hovering a running row swaps its time for a close button [T1112-5] */
+  .side-row .row-x { display: none; }
+  .side-row:hover .row-x { display: flex; }
+  .side-row:hover .row-time:has(+ .row-x) { display: none; }
+  .side-row.is-tidy { color: var(--color-faint); }
+  .side-row.is-tidy:hover { color: var(--color-ink-soft); }
+  .side-row.is-sel { background: var(--color-row-sel); color: var(--color-ink); font-weight: 500; }
+  .side-row.is-child { font-size: 13px; }
+  /* a group label (project name, Pinned, Coordinators) */
+  .side-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+  }
+  /* a tiny tag in a row (codex, agy, an account) */
+  .tag {
+    flex: none;
+    border-radius: 4px;
+    padding: 0 5px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+  }
+
+  /* Status dots: colour plus shape, so they read at 7px */
+  .dot { flex: none; width: 7px; height: 7px; border-radius: 9999px; }
+  .dot-busy { background: var(--color-st-busy); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-st-busy) 18%, transparent); animation: deck-breathe 1.6s ease-in-out infinite; }
+  .dot-waiting { background: var(--color-st-wait); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-st-wait) 25%, transparent); }
+  .dot-idle { background: var(--color-st-idle); }
+  .dot-blocked { background: var(--color-st-blocked); }
+  .dot-ended { background: transparent; box-shadow: inset 0 0 0 1.5px var(--color-st-stop); }
+
+  .hairline { border-bottom: 1px solid var(--color-line); }
+
+  /* hairline helpers + mono pill */
+  .hair { border: 1px solid var(--color-line); }
+  .hair-strong { border: 1px solid var(--color-line-strong); }
+  .pill-mono { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: -0.01em; }
+  .col-label { font-size: 0.6875rem; letter-spacing: 0.06em; font-weight: 500; text-transform: uppercase; color: var(--color-faint); }
+}
+
+/* Utility: subtle scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--color-line-strong); border-radius: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes deck-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot-busy, .animate-pulse-ring { animation: none; }
+}
+
+@keyframes deck-pulse-ring {
+  0% { opacity: 0.6; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0.6; transform: scale(0.96); }
+}
+.animate-pulse-ring { animation: deck-pulse-ring 1.6s ease-in-out infinite; }
+

@@ -1,0 +1,614 @@
+#!/bin/sh
+// 2>/dev/null; for b in "$(command -v bun)" "${BUN_INSTALL:-$HOME/.bun}/bin/bun" "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do [ -x "$b" ] && exec "$b" "$0" "$@"; done; echo "overvibe: Bun is not installed (https://bun.sh)" >&2; exit 127
+// The two lines above run this file with Bun even when Bun is not on PATH (its installer only adds it to a
+// shell profile, which agent sessions and service shells may not read). In TypeScript they are comments.
+// overvibe: start and talk to Overvibe sessions (Claude Code, Codex, agy) from any shell or agent: a
+// coordinator spawning real sessions instead of subagents. Talks to the local server at 127.0.0.1:7777
+// with its token. `ov` is the short alias where it is free; `deck` (the old name) still works.
+//   overvibe new --cwd <folder> [--mkdir] [--name <name>] [--prompt <first message>] [--account auto|<name>] [--mode ask|auto | --auto | --no-auto] [--chrome] [--attach]
+//   overvibe send <session name> "<message>"   (any session: Claude, Codex or agy)
+//   overvibe ls [--json]   |   overvibe ls --past [--cwd <folder>] [--limit N] [--json]   (stopped and past sessions)
+//   overvibe resume "<name | id | id prefix>" [--prompt <message>] [--attach] [--account NAME] [--fork]
+//   overvibe open [<session name>]   (brings that session, default this one, up on the owner's screen)
+//   overvibe move --to <folder> [--session <name>]   (moves after the session's turn ends, then resumes it there)
+//   overvibe attach <session name>   (that session's terminal in this one, through tmux; Ctrl-b d leaves it running)
+//   overvibe tidy [--json] [--hours N]   (which running sessions look safe to close; read only)
+//   overvibe search "<text>" [--limit N] [--json]   (what was said in any session, running, stopped or hidden)
+//   overvibe context ["<session name>"] [--json]   (what a session's context holds, from its transcript)
+//   overvibe tasks id | add "<what>" [--waiting] | check   [--dir <folder>]   (the project's TASKS.md, no server needed)
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { realpathSync } from 'node:fs'
+
+const BASE = `http://127.0.0.1:${process.env.OVERVIBE_PORT ?? process.env.DECK_PORT ?? 7777}`
+// this session's tmux id; sessions started before the rename only have DECK_SESSION
+const SELF = process.env.OVERVIBE_SESSION || process.env.DECK_SESSION || ''
+// OVERVIBE_DATA_DIR / OVERVIBE_TMUX_SOCKET: a second instance (src/env.ts); sessions it starts inherit both
+// the config folder, chosen as src/env.ts dataDirFor does: ~/.config/overvibe, or ~/.config/agent-deck on an
+// install from before the rename (kept in place; the server links the new name to it) [T1110-80]
+const DATA_DIR = (() => {
+  if (process.env.OVERVIBE_DATA_DIR) return process.env.OVERVIBE_DATA_DIR.replace(/^~(?=\/|$)/, homedir())
+  const neu = join(homedir(), '.config', 'overvibe')
+  const old = join(homedir(), '.config', 'agent-deck')
+  const realDir = (p: string) => {
+    try {
+      const st = lstatSync(p)
+      return st.isDirectory() && !st.isSymbolicLink()
+    } catch {
+      return false
+    }
+  }
+  return realDir(old) && (existsSync(join(old, 'token')) || !realDir(neu)) ? old : neu
+})()
+const SOCKET = process.env.OVERVIBE_TMUX_SOCKET || 'agent-deck'
+// what this prints lands in terminals, screenshots and pasted output: the home folder shows as ~ and session
+// ids as their first 8 characters (--json output keeps the full values) [T1110-83]
+const HOME = homedir()
+const tild = (p: string) => (typeof p !== 'string' ? p : p === HOME || p.startsWith(HOME + '/') ? '~' + p.slice(HOME.length) : p)
+const tildAll = (text: string) => text.replace(new RegExp(HOME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=/|$|[\\s"\'),;:])', 'g'), '~')
+const shortId = (id: string | undefined) => (id ? id.slice(0, 8) : 'pending')
+// up, down, doctor, install, update, uninstall, and open outside a session: install.sh in this checkout runs them, so
+// they work before the server has ever made a token (README "Install")
+{
+  const [c, ...a] = process.argv.slice(2)
+  const page = c === 'open' && (a.includes('--page') || (!a.length && !SELF))
+  if (c && (['up', 'down', 'doctor', 'install', 'update', 'uninstall'].includes(c) || page)) {
+    const sh = join(realpathSync(process.argv[1]!), '..', '..', 'install.sh')
+    const p = Bun.spawn(['/bin/sh', sh, c, ...a.filter((x) => x !== '--page')], { stdio: ['inherit', 'inherit', 'inherit'] })
+    process.exit(await p.exited)
+  }
+}
+// overvibe tasks id|add|check: works on the project's TASKS.md directly (no server needed); the Tasks view reads the
+// file again when it changes. The server is only asked which session this is, for the "· session <id8>" tag [T1112-15]
+if (process.argv[2] === 'tasks' && !process.argv.slice(3).some((a) => a === '--help' || a === '-h')) {
+  const [, , , sub = 'check', ...a] = process.argv
+  const opt = (k: string) => {
+    const i = a.indexOf(k)
+    return i >= 0 ? a[i + 1] : undefined
+  }
+  const words = a.filter((x, i) => !x.startsWith('--') && !(i > 0 && ['--dir', '--session'].includes(a[i - 1]!)))
+  const lib = await import(join(realpathSync(process.argv[1]!), '..', '..', 'src', 'tasklist.ts'))
+  const given = opt('--dir') ?? process.cwd()
+  const dir = given === '~' || given.startsWith('~/') ? join(homedir(), given.slice(2)) : resolve(given)
+  try {
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`no folder ${given}`)
+    if (sub === 'id') {
+      console.log(lib.allocateId(dir, DATA_DIR))
+    } else if (sub === 'add') {
+      const what = words.join(' ').trim()
+      if (!what) throw new Error('usage: overvibe tasks add "<what>" [--waiting] [--dir <folder>] [--session <id8>]')
+      const session = opt('--session') ?? (await selfId())
+      const r = lib.addTask({ dir, dataDir: DATA_DIR, what, waiting: a.includes('--waiting'), session })
+      console.log(r.id)
+      console.error(`${r.created ? 'made ' : 'added to '}${tild(r.file)} under ${a.includes('--waiting') ? 'Waiting on the owner' : 'To do'}${session ? '' : ' (no session tag: not inside a Claude Code or Overvibe session; pass --session <id8>)'}`)
+    } else if (sub === 'check') {
+      const file = lib.tasksPath(dir)
+      if (!existsSync(file)) throw new Error(`no TASKS.md in ${tild(file.replace(/\/TASKS\.md$/, ''))} (overvibe tasks add "<what>" makes one)`)
+      const text = readFileSync(file, 'utf8')
+      const probs = lib.checkTasks(text, lib.shippedIds(dir))
+      const open = text.split('\n').filter((l: string) => /^\s*- \[ \]/.test(l)).length
+      console.log(`${tild(file)}: ${open} open`)
+      if (!probs.length) console.log('ok')
+      for (const p of probs) console.log(`  line ${p.line}: ${p.kind}\n    ${p.text}`)
+      process.exit(probs.some((p: any) => p.kind.startsWith('duplicate')) ? 1 : 0)
+    } else throw new Error(`unknown: overvibe tasks ${sub} (id, add, check)`)
+  } catch (e: any) {
+    console.error(`overvibe: ${e.message}`)
+    process.exit(1)
+  }
+  process.exit(0)
+}
+/** This session's id, first 8: Claude Code's own variable, Codex's thread id, else the Overvibe record for OVERVIBE_SESSION. */
+async function selfId(): Promise<string | null> {
+  const hex = (v?: string) => (v && /^[0-9a-f]{8}/i.test(v) ? v.slice(0, 8).toLowerCase() : null)
+  const env = hex(process.env.CLAUDE_CODE_SESSION_ID) ?? hex(process.env.CODEX_THREAD_ID)
+  if (env || !SELF) return env
+  try {
+    const tok = readFileSync(join(DATA_DIR, 'token'), 'utf8').trim()
+    const r = await fetch(BASE + '/api/state', { headers: { cookie: `deck=${tok}`, origin: BASE }, signal: AbortSignal.timeout(3000) })
+    const s: any = await r.json()
+    return hex(s.sessions?.find((x: any) => x.tmux === SELF || x.key === SELF)?.sessionId)
+  } catch {
+    return null
+  }
+}
+const token = readFileSync(join(DATA_DIR, 'token'), 'utf8').trim()
+// OVERVIBE_PROOF: this session's secret; the server checks it against OVERVIBE_SESSION, so a call can't
+// claim to come from another session [T1110-78]
+const PROOF = process.env.OVERVIBE_PROOF || ''
+const headers: Record<string, string> = { cookie: `deck=${token}`, origin: BASE, 'content-type': 'application/json', ...(PROOF ? { 'x-overvibe-proof': PROOF } : {}) }
+const USAGE = `overvibe: start and talk to Claude Code, Codex and agy sessions in Overvibe (http://127.0.0.1:7777)
+ov is the short form of overvibe where it is installed.
+
+  overvibe new --cwd <folder> [--mkdir] [--tool claude|codex|agy|shell] [--name "<name>"] [--prompt "<first message>"] [--account auto|NAME] [--mode ask|auto | --auto | --no-auto] [--chrome] [--attach]
+      --mkdir: create the folder if it does not exist (mkdir -p; under your home folder only)
+      --mode ask (or --no-auto): the tool's own approval prompts (the owner answers them in Overvibe); --mode auto (or --auto):
+          the tool's auto mode. Left out, the folder's deck.json "mode", else Settings > "Start new sessions in auto mode"
+          decides (off by default). A session in ask mode
+          can only start sessions in ask mode (and no --tool shell); --mode auto from there is refused
+      --account auto (the default): no fixed account; the folder's account or the default account decides (or a local router file, if you have one)
+      --account NAME: a Claude account for --tool claude, a Codex account for --tool codex (Settings lists both); agy has one login
+      --attach: a child of this session, shown nested under it in the sidebar; close it with overvibe stop when done
+      --tool shell (or terminal): a plain login shell in the folder, no agent; --prompt is a command it runs first.
+          Started from a session, it stays in its own place in the sidebar (no --attach) but that session can stop it:
+          stop the test terminals you open when you are done with them (overvibe stop "<name>")
+      --worktree: run it in its own git worktree, on a new branch ov/<name> from the folder's HEAD, in <repo>.worktrees/<name>
+          beside the repo; when it stops you get the branch and how to merge it (Overvibe never deletes the worktree)
+      sessions started by sessions are capped (Settings > Spawn limits: 3 levels deep, 8 running children each by default)
+      --skill NAME (repeatable): give the new session a skill from the Overvibe library (overvibe skills ls) in its folder
+  overvibe send "<session name>" "<message>"
+      the receiver sees a header Overvibe writes: who sent it (checked with this session's OVERVIBE_PROOF) and that a
+      peer's message is information, not the owner's instructions
+      only agent sessions take messages: a --tool shell terminal is refused (nothing is typed into a shell)
+  overvibe ls [--json]
+  overvibe ls --past [--cwd <folder>] [--limit N] [--json]   stopped and past sessions, newest first (default 20; closed children and hidden ones included)
+  overvibe resume "<name | id | id prefix>" [--prompt "<message>"] [--attach] [--account auto|NAME] [--mode ask|auto | --auto | --no-auto] [--fork]
+      continues that same conversation as a live session in its folder, with its name and its sidebar row
+      (Claude, Codex, agy); a stopped attached child comes back under its parent. --prompt is typed once it is up;
+      --attach makes it a child of this session; --fork starts a copy instead (Claude only; also works on a running one)
+  overvibe open ["<session name>"]      open a session on the owner's screen in Overvibe (default: this one), e.g. when they must answer there
+  overvibe stop "<session name>"        stop a session (its conversation is kept); an attached child is also hidden from the list
+  overvibe stop --children              close every attached child of this session, and stop the terminals it started
+      from inside a session, overvibe stop only reaches itself and the sessions and terminals it started; the owner (plain shell) can stop any
+  overvibe move --to <folder> [--session "<name>"]   move a Claude session (default: this one) to another folder; it moves once its turn ends and carries on there
+  overvibe peek "<session name>" [--lines N]   print the last lines of a running session's screen (default 40), to see
+      what it is doing; use this, never tmux directly (Overvibe's sessions live on their own tmux server)
+  overvibe messages [--with "<name>"] [--limit N] [--json]   the messages sessions sent each other (overvibe send, and
+      Overvibe's own notes), whole, oldest first (default the last 50); --with: only those to or from that session
+  overvibe context ["<session name>"] [--json]   what a Claude or Codex session's context holds now (default: this one): used
+      out of the window, fixed overhead (system prompt, tools, skills list, CLAUDE.md) against your messages, replies, tool
+      output by tool, skill loads, subagent reports, and the 5 biggest items; read from its transcript, nothing is typed into it
+  overvibe tidy [--hours N] [--json]   running sessions sorted for closing: done (idle N hours, default 2, its last reply
+      asks nothing), waiting on you (a menu is open or its last reply asks something), unsure; with each one's idle time,
+      reason and last reply. It never closes anything: recommend, and the owner closes them in Overvibe (Close old sessions)
+  overvibe search "<text>" [--limit N] [--json]   find text said in any session (running, stopped, hidden, older ones too):
+      your messages, Claude's and Codex's replies, agy's screen; every word must be in the same message; newest first,
+      up to 3 hits per session (default 10 sessions). Shell screens are left out (they can hold secrets)
+  overvibe accounts [--json]   the Claude and Codex accounts: email, usage, and which one Claude in Chrome is paired with
+      (overvibe new --chrome, without --account, runs there); a paused one is refused for new, resumed and switched sessions
+  overvibe read <id>   one message sent to this session, whole: a long one arrives as its start plus this command
+  overvibe attach "<session name>" [--print]   open a running session in this terminal (tmux attach); Ctrl-b d detaches and leaves it running
+      --print: only show the tmux command it would run
+  overvibe skills [ls [--json] | sync | add <folder> [--tools claude,codex,agy] [--project <folder>]... | import <claude|codex|agy> <name> [--replace]
+                  | on <name> | off <name> | remove <name> [--purge --yes] | alias <name> <old-name>]
+      one skills library (~/.config/overvibe/skills, plus the ones Overvibe ships) linked into Claude Code, Codex and agy;
+      Overvibe only touches links and copies it made; a skill folder that is already there is reported, never replaced.
+      import --replace: the CLI's own copy moves to ~/.config/overvibe/skills-backup/ and a link takes its place.
+      remove: unlinks it everywhere and switches it off; --purge --yes also moves the library copy to skills-backup/
+  overvibe tasks id [--dir <folder>]   the next free task id for today in that project's TASKS.md (T<MMDD>-<n>)
+  overvibe tasks add "<what>" [--waiting] [--dir <folder>]   add a line under To do (--waiting: Waiting on the owner) with
+      a new id, today's date and this session's tag; makes TASKS.md with its three sections if missing; prints the id
+  overvibe tasks check [--dir <folder>]   what is wrong in TASKS.md: ticked outside Done, a line without an id, an id used
+      twice, a tick that does not say how it was checked, an id shipped on main but still open. The tasks skill has the rules
+  overvibe up | down          start or stop the Overvibe server (its login agent if installed, else directly); sessions keep running
+  overvibe open [--page]      outside a session (or with --page): open the Overvibe page in the browser, logged in; starts the server if needed
+  overvibe doctor             check bun, tmux, the app, the CLI links, the login agent, the server and the claude/codex/agy CLIs
+  overvibe install | uninstall   run the installer again (update and restart) | remove the login agent and the CLI links (sessions, transcripts and settings stay)
+  overvibe update              update the installed Overvibe (~/.overvibe/app) to the newest release: git fetch, that tag, bun install,
+      build, restart the server; a clone you run yourself is left alone (git pull it). The page reloads when the server is back
+
+Examples:
+  overvibe new --tool codex --cwd ~/code/my-app --name "my-app: codex copy" --prompt "Rewrite the intro in README.md. When done, run: overvibe send \"my-app-lead\" \"<summary>\""
+  overvibe send "my-app: codex copy" "Also shorten the first paragraph."
+  overvibe new --attach --cwd ~/code/x --name "x: check tests" --prompt "Run the tests. When done, run: overvibe send \"$OVERVIBE_SESSION\" \"<result>\""
+  overvibe stop "x: check tests"
+  overvibe resume "x: check tests" --prompt "One more thing: also run the lint. Report back the same way."
+  overvibe new --tool shell --cwd ~/code/my-app --name "my-app: dev server" --prompt "bun run dev"
+  overvibe attach "my-app: dev server"
+  overvibe ls`
+const NEW_FLAGS = new Set(['--cwd', '--mkdir', '--tool', '--name', '--prompt', '--account', '--mode', '--auto', '--no-auto', '--chrome', '--attach', '--skill', '--worktree'])
+// --mode ask|auto: checked here so a typo never starts a session in the wrong mode [T1110-85]
+function modeFlag(v: string | undefined) {
+  if (v === undefined) return undefined
+  if (v !== 'ask' && v !== 'auto') throw new Error(`--mode must be ask or auto (got "${v}")`)
+  return v
+}
+// --auto / --no-auto [T1112-99]: the same choice as --mode auto / --mode ask, for "start it in auto mode or not"
+function modeOpt(valFlags: string[]) {
+  const on = (k: string) => rest.some((a, i) => a === k && !(i > 0 && valFlags.includes(rest[i - 1]!)))
+  const yes = on('--auto'), no = on('--no-auto')
+  if (yes && no) throw new Error('--auto and --no-auto: pick one')
+  const m = modeFlag(flag('mode'))
+  const b = yes ? 'auto' : no ? 'ask' : undefined
+  if (m && b && m !== b) throw new Error(`--mode ${m} and --${yes ? 'auto' : 'no-auto'} disagree: pick one`)
+  return m ?? b
+}
+/** A session's tokens for a list line: "1.2M in (97% cached) / 38k out" [T1111-13]. */
+function tokens(t: { in: number; out: number; cacheRead?: number } | undefined) {
+  if (!t || !(t.in || t.out)) return ''
+  const n = (x: number) => (x >= 1e6 ? `${(x / 1e6).toFixed(x >= 1e7 ? 0 : 1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : String(x))
+  const cached = t.in && t.cacheRead ? ` (${Math.round((100 * t.cacheRead) / t.in)}% cached)` : ''
+  return `${n(t.in)} in${cached} / ${n(t.out)} out`
+}
+const [cmd, ...rest] = process.argv.slice(2)
+const TOOLS: Record<string, string> = { claude: 'claude', codex: 'codex', agy: 'agy', shell: 'shell', terminal: 'shell' }
+const flag = (k: string) => {
+  const i = rest.indexOf(`--${k}`)
+  return i >= 0 ? rest[i + 1] : undefined
+}
+async function call(path: string, body?: unknown) {
+  const r = await fetch(BASE + path, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) }).catch(() => null)
+  if (!r) throw new Error(`Overvibe is not running on ${BASE} (start it with bun run dev in its folder)`)
+  const j: any = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j.error ?? r.statusText)
+  return j
+}
+/** overvibe skills ...: the server does the work (one writer for the manifest); this prints it [T1110-64] */
+async function skillsCmd(args: string[]) {
+  const [sub = 'ls', ...a] = args
+  const opt = (k: string) => {
+    const i = a.indexOf(k)
+    return i >= 0 ? a[i + 1] : undefined
+  }
+  const words = a.filter((x, i) => !x.startsWith('--') && !(i > 0 && ['--tools', '--project'].includes(a[i - 1]!)))
+  const printChanges = (r: any) => {
+    for (const c of r.changes ?? []) console.log(`  ${tildAll(String(c))}`)
+    const clashes = (r.statuses ?? []).filter((x: any) => x.state !== 'ok')
+    for (const c of clashes) console.log(`  ${c.state}: ${tild(c.path)} (${c.skill}, ${c.tool}): ${c.note ?? ''}`)
+    if (!(r.changes ?? []).length && !clashes.length) console.log('  nothing to change')
+  }
+  if (sub === 'ls') {
+    const r = await call('/api/skills')
+    if (a.includes('--json')) return console.log(JSON.stringify(r, null, 2))
+    console.log(`library ${tild(r.library)}  (bundled: ${tild(r.bundled)})`)
+    for (const s of r.skills) {
+      const where = s.projects.length ? `projects ${s.projects.join(', ')}` : 'everywhere'
+      const bad = s.places.filter((p: any) => p.state !== 'ok')
+      console.log(`${s.on ? 'on ' : 'off'} ${s.name.padEnd(24)} ${s.tools.join(',').padEnd(17)} ${where}${s.source === 'bundled' ? '  (ships with Overvibe)' : ''}`)
+      for (const p of bad) console.log(`      ${p.state}: ${tild(p.path)} (${p.tool}) ${p.note ?? ''}`)
+      for (const p of s.problems) console.log(`      problem: ${tildAll(String(p))}`)
+    }
+    const others = r.others.filter((o: any) => !o.inLibrary)
+    if (others.length) console.log(`\nnot in the library (overvibe skills import <tool> <name>): ${others.map((o: any) => `${o.tool}/${o.name}`).join(', ')}`)
+  } else if (sub === 'sync') {
+    console.log('synced:')
+    printChanges(await call('/api/skills/sync', {}))
+  } else if (sub === 'add') {
+    if (!words[0]) throw new Error('usage: overvibe skills add <skill folder> [--tools claude,codex,agy] [--project <folder>]...')
+    const path = words[0] === '~' || words[0].startsWith('~/') ? join(homedir(), words[0].slice(2)) : resolve(words[0])
+    const projects = a.flatMap((x, i) => (x === '--project' ? [a[i + 1] ?? ''] : [])).map((p) => (p.startsWith('~/') ? join(homedir(), p.slice(2)) : resolve(p)))
+    const r = await call('/api/skills/add', { path, tools: opt('--tools')?.split(',').map((t) => t.trim()), projects: projects.length ? projects : undefined })
+    console.log(`added "${r.name}" to the library (${tild(r.dir)})`)
+    printChanges(r)
+  } else if (sub === 'import') {
+    const [tool, name] = words
+    if (!tool || !name) throw new Error('usage: overvibe skills import <claude|codex|agy> <name> [--replace]')
+    const r = await call('/api/skills/import', { tool, name, replace: a.includes('--replace') })
+    console.log(`imported ${tool}/${name} into the library (${tild(r.dir)})${r.backup ? `; the original moved to ${tild(r.backup)}` : ''}`)
+    printChanges(r)
+  } else if (sub === 'on' || sub === 'off') {
+    if (!words[0]) throw new Error(`usage: overvibe skills ${sub} <name>`)
+    printChanges(await call('/api/skills/on', { name: words[0], on: sub === 'on' }))
+  } else if (sub === 'alias') {
+    if (!words[0] || !words[1]) throw new Error('usage: overvibe skills alias <name> <old-name> [--off]')
+    printChanges(await call('/api/skills/alias', { name: words[0], alias: words[1], on: !a.includes('--off') }))
+  } else if (sub === 'remove') {
+    if (!words[0]) throw new Error('usage: overvibe skills remove <name> [--purge --yes]')
+    const purge = a.includes('--purge')
+    if (purge && !a.includes('--yes')) throw new Error(`--purge also moves the library copy of "${words[0]}" to ~/.config/overvibe/skills-backup/; add --yes to confirm`)
+    const r = await call('/api/skills/remove', { name: words[0], purge })
+    console.log(`removed "${r.name}" from every CLI and switched it off${r.purged ? `; library copy moved to ${tild(r.purged)}` : r.bundled ? ' (it ships with Overvibe: overvibe skills on ' + r.name + ' brings it back)' : '; the library copy is kept'}`)
+    for (const c of r.changes) console.log(`  ${tildAll(String(c))}`)
+  } else throw new Error(`unknown: overvibe skills ${sub} (ls, sync, add, import, on, off, alias, remove)`)
+}
+try {
+  if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h' || rest.includes('--help') || rest.includes('-h')) {
+    console.log(USAGE)
+    process.exit(0)
+  }
+  if (cmd === 'new') {
+    // never start a session from a typo: every --flag must be known, and --cwd is required
+    const bad = rest.filter((a, i) => a.startsWith('--') && !NEW_FLAGS.has(a) && !(i > 0 && ['--prompt', '--name'].includes(rest[i - 1]!)))
+    if (bad.length) throw new Error(`unknown option ${bad.join(', ')}\n\n${USAGE}`)
+    if (!flag('cwd')) throw new Error(`--cwd is required\n\n${USAGE}`)
+    // relative to where overvibe runs; a missing folder is an error unless --mkdir asks to create it [T1110-6]
+    const given = flag('cwd')!
+    const cwd = given === '~' || given.startsWith('~/') ? join(homedir(), given.slice(2)) : resolve(given)
+    const mkdir = rest.some((a, i) => a === '--mkdir' && !(i > 0 && ['--prompt', '--name'].includes(rest[i - 1]!)))
+    if (!mkdir && !(existsSync(cwd) && statSync(cwd).isDirectory())) throw new Error(`no folder ${given}; add --mkdir to create it`)
+    if (mkdir && given.split('/').includes('..')) throw new Error('--mkdir: no ".." in the path')
+    const attach = rest.some((a, i) => a === '--attach' && !(i > 0 && ['--prompt', '--name'].includes(rest[i - 1]!)))
+    if (attach && !SELF) throw new Error('--attach starts a child of this session, but this is not an Overvibe session (no OVERVIBE_SESSION)')
+    const tool = TOOLS[flag('tool') ?? 'claude']
+    if (!tool) throw new Error(`--tool must be claude, codex, agy or shell (got "${flag('tool')}")`)
+    // --skill NAME, repeatable: library skills the child gets in its folder [T1110-64]
+    const skills = rest.flatMap((a, i) => (a === '--skill' && !(i > 0 && ['--prompt', '--name'].includes(rest[i - 1]!)) ? [rest[i + 1] ?? ''] : []))
+    if (skills.some((x) => !x || x.startsWith('--'))) throw new Error('--skill needs a skill name (overvibe skills ls)')
+    if (skills.length && tool === 'shell') throw new Error('--skill is for agent sessions')
+    // --worktree: its own git worktree on branch ov/<name> from HEAD [T1110-79]
+    const worktree = rest.some((a, i) => a === '--worktree' && !(i > 0 && ['--prompt', '--name'].includes(rest[i - 1]!)))
+    if (worktree && tool === 'shell') throw new Error('--worktree is for agent sessions')
+    const mode = modeOpt(['--prompt', '--name'])
+    if (mode && tool === 'shell') throw new Error('--mode / --auto / --no-auto are for agent sessions; a terminal has no approvals')
+    const r = await call('/api/sessions', { cwd, tool, mode, worktree: worktree || undefined, name: flag('name'), prompt: flag('prompt'), account: flag('account') ?? 'auto', chrome: rest.includes('--chrome') || undefined, mkdir: mkdir || undefined, from: SELF || undefined, attach: attach || undefined, skills: skills.length ? skills : undefined })
+    if (skills.length) console.log(`with skills: ${skills.join(', ')}`)
+    console.log(`started "${r.name}" in ${tild(r.cwd)}${r.account ? ` on ${r.account}` : ''} (${tool === 'shell' ? 'terminal' : `session ${shortId(r.sessionId)}, ${r.mode === 'ask' ? 'ask' : 'auto'} mode`})${attach ? ', attached to this session' : ''}`)
+    if (r.pausedNote) console.log(`note: ${r.pausedNote}`)
+    if (r.chromeNote) console.log(`note: ${r.chromeNote}`)
+    // another live agent in the same checkout [T1111-10]
+    if (r.sharing?.length) console.log(`note: ${r.sharing.map((t: string) => `"${t}"`).join(', ')} ${r.sharing.length === 1 ? 'is' : 'are'} already working in this checkout. Two agents editing one checkout can overwrite each other's changes; for a helper that edits code, stop this one and start it with --worktree`)
+    if (r.worktree) console.log(`in its own worktree ${tild(r.worktree.path)} on branch ${r.worktree.branch} (from ${String(r.worktree.base).slice(0, 7)}); when it stops you get the branch and how to merge it`)
+    if (attach) console.log(`close it when you no longer need it: overvibe stop "${r.name}"`)
+    if (tool === 'shell') console.log(`open it here: overvibe attach "${r.name}"${SELF ? `; stop it when done: overvibe stop "${r.name}"` : ''}`)
+    else console.log(`message it: overvibe send "${r.name}" "<message>"`)
+  } else if (cmd === 'send') {
+    const [to, ...words] = rest
+    const text = words.join(' ')
+    if (!to || !text) throw new Error('usage: overvibe send <session name> "<message>"')
+    const r = await call('/api/send', { to, text, from: SELF })
+    // typed at once when the session is free; otherwise it waits for a pause (never over the owner's draft) [T1110-60]
+    if (r.delivered === false) console.log(`queued, will deliver when "${r.to}" is free (${r.tool}; ${r.why ?? 'busy'}${r.ahead ? `; ${r.ahead} ahead of it` : ''})`)
+    else console.log(`delivered to "${r.to}" (${r.tool})`)
+  } else if (cmd === 'ls' && rest.includes('--past')) {
+    const lim = Number(flag('limit') ?? 20)
+    if (!Number.isInteger(lim) || lim < 1) throw new Error('--limit must be a whole number above 0')
+    const given = flag('cwd')
+    const dir = given ? (given === '~' || given.startsWith('~/') ? join(homedir(), given.slice(2)) : resolve(given)) : ''
+    const s = await call('/api/past')
+    const rows = s.sessions.filter((x: any) => !dir || x.cwd === tild(dir) || x.cwd.startsWith(tild(dir) + '/')).slice(0, lim)
+    const ago = (t: number) => {
+      const m = Math.max(0, Math.round((Date.now() - t) / 60_000))
+      return m < 60 ? `${m}m ago` : m < 48 * 60 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`
+    }
+    if (rest.includes('--json')) console.log(JSON.stringify(rows.map((x: any) => ({ title: x.title, tool: x.tool ?? 'claude', cwd: x.cwd, last: x.last, sessionId: x.sessionId, tmux: x.where === 'deck' ? x.key : null, attached: !!x.attached, closed: !!x.closed, hidden: !!x.hidden, tokens: x.tokens ?? null })), null, 2))
+    else if (!rows.length) console.log('no stopped or past sessions' + (given ? ` in ${given}` : ''))
+    else for (const x of rows) console.log(`${ago(x.last).padEnd(8)} ${(x.tool ?? 'claude').padEnd(6)} ${(x.sessionId ?? '-').slice(0, 8).padEnd(8)} ${String((x.attached ? '↳ ' : '') + x.title).slice(0, 44).padEnd(44)} ${tild(x.cwd)}${x.closed ? '  (closed)' : x.hidden ? '  (hidden)' : ''}${x.tokens ? `  ${tokens(x.tokens)}` : ''}`)
+  } else if (cmd === 'resume') {
+    const VAL = ['--prompt', '--account', '--mode']
+    const bad = rest.filter((a, i) => a.startsWith('--') && !['--prompt', '--account', '--mode', '--auto', '--no-auto', '--attach', '--fork'].includes(a) && !(i > 0 && VAL.includes(rest[i - 1]!)))
+    if (bad.length) throw new Error(`unknown option ${bad.join(', ')}\n\n${USAGE}`)
+    const target = rest.filter((a, i) => !a.startsWith('--') && !(i > 0 && VAL.includes(rest[i - 1]!))).join(' ').trim()
+    if (!target) throw new Error('usage: overvibe resume "<name | id | id prefix>" [--prompt "<message>"] [--attach]   (overvibe ls --past lists them)')
+    const on = (k: string) => rest.some((a, i) => a === k && !(i > 0 && VAL.includes(rest[i - 1]!)))
+    const attach = on('--attach')
+    if (attach && !SELF) throw new Error('--attach makes it a child of this session, but this is not an Overvibe session (no OVERVIBE_SESSION)')
+    const r = await call('/api/resume', { target, mode: modeOpt(VAL), prompt: flag('prompt'), account: flag('account') ?? 'auto', fork: on('--fork') || undefined, attach: attach || undefined, from: SELF || undefined })
+    console.log(`${r.fork ? 'copied' : 'resumed'} "${r.title}" in ${tild(r.cwd)}${r.account ? ` on ${r.account}` : ''} (${r.tool}, session ${shortId(r.sessionId)}, ${r.mode === 'ask' ? 'ask' : 'auto'} mode)${r.attached ? ', attached' : ''}`)
+    if (r.pausedNote) console.log(`note: ${r.pausedNote}`)
+    if (r.attached) console.log(`close it when you no longer need it: overvibe stop "${r.name}"`)
+    console.log(`message it: overvibe send "${r.name}" "<message>"`)
+  } else if (cmd === 'ls') {
+    const s = await call('/api/state')
+    const live = s.sessions.filter((x: any) => x.where !== 'past' && x.tmux !== null || x.where === 'terminal' || x.where === 'background')
+    if (rest.includes('--json')) console.log(JSON.stringify(live, null, 2))
+    else {
+      for (const x of live) console.log(`${x.status.padEnd(8)} ${(x.kind === 'shell' ? 'shell' : x.tool ?? 'claude').padEnd(6)} ${x.where === 'deck' ? 'overvibe' : 'outside '} ${String((x.attached ? '↳ ' : '') + x.title).slice(0, 40).padEnd(40)} ${tild(x.cwd)}${x.mode === 'ask' ? '  (ask mode)' : ''}${x.tokens ? `  ${tokens(x.tokens)}` : ''}`)
+      // on stderr, so a script reading the list is unaffected; agents see it and skip raw tmux
+      if (live.length) console.error('\nsee what one is doing: overvibe peek "<name>"; ask it: overvibe send "<name>" "<message>" (never tmux directly)')
+    }
+  } else if (cmd === 'open') {
+    const name = rest.join(' ').trim() || SELF
+    if (!name) throw new Error('not inside an Overvibe session (no OVERVIBE_SESSION); say which one: overvibe open "<session name>"')
+    const r = await call('/api/focus', { session: name, from: SELF })
+    console.log(`opened "${r.title}" in Overvibe`)
+  } else if (cmd === 'stop') {
+    const children = rest.includes('--children')
+    const name = rest.filter((a) => a !== '--children').join(' ').trim()
+    if (!children && !name) throw new Error('usage: overvibe stop "<session name>"  or  overvibe stop --children')
+    if (children && name) throw new Error('overvibe stop takes a session name or --children, not both')
+    const r = await call('/api/stop', { session: name || undefined, children, from: SELF })
+    if (!r.done.length) console.log('no attached children or terminals to close')
+    for (const d of r.done) {
+      console.log(`${d.stopped ? 'stopped' : 'closed'} ${d.terminal ? 'terminal ' : ''}"${d.name}"${d.hidden ? ' and hid it from the list' : ''}${d.terminal ? '' : ' (conversation kept)'}`)
+      if (d.worktree) console.log(`  ${tildAll(d.worktree)}`)
+    }
+  } else if (cmd === 'move') {
+    const to = flag('to')
+    const session = flag('session') ?? (SELF || undefined)
+    if (!to) throw new Error('usage: overvibe move --to <folder> [--session "<name>"]')
+    if (!session) throw new Error('not inside an Overvibe session (no OVERVIBE_SESSION); say which one with --session "<name>"')
+    const abs = to.startsWith('~/') || to === '~' ? join(homedir(), to.slice(2)) : resolve(to)
+    const r = await call('/api/sessions/move-later', { session, cwd: abs, from: SELF })
+    console.log(`"${r.name}" will move from ${tild(r.from)} to ${tild(r.to)} once its current turn ends, then resume there with a note to carry on. End your turn now if it is this session.`)
+  } else if (cmd === 'skills') {
+    await skillsCmd(rest)
+  } else if (cmd === 'messages') {
+    // the whole log of messages between sessions, from the server's peer-messages.jsonl [T1111-12]
+    const lim = Number(flag('limit') ?? 50)
+    if (!Number.isInteger(lim) || lim < 1) throw new Error('--limit must be a whole number above 0')
+    const bad = rest.filter((a, i) => a.startsWith('--') && !['--with', '--limit', '--json'].includes(a) && !(i > 0 && ['--with', '--limit'].includes(rest[i - 1]!)))
+    if (bad.length) throw new Error(`unknown option ${bad.join(', ')} (overvibe messages [--with "<name>"] [--limit N] [--json])`)
+    const q = new URLSearchParams({ limit: String(lim) })
+    if (flag('with')) q.set('with', flag('with')!)
+    const r = await call(`/api/peer-messages?${q}`)
+    if (rest.includes('--json')) console.log(JSON.stringify(r.messages, null, 2))
+    else if (!r.messages.length) console.log(flag('with') ? `no messages to or from "${flag('with')}"` : 'no messages between sessions yet')
+    else
+      for (const m of r.messages) {
+        const d = new Date(m.at)
+        const when = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+        const who = m.sender === 'outside' ? 'a shell outside Overvibe' : `"${m.from}"`
+        console.log(`${when}  ${who} -> "${m.to}" (${m.sender === 'overvibe' ? 'Overvibe note' : `sender ${m.sender === 'checked' ? 'checked' : m.sender === 'legacy' ? 'not checked' : 'outside'}`}): ${m.text}`)
+      }
+  } else if (cmd === 'wait-message') {
+    // run by a Claude session's own hook (src/inbox.ts) [T1111-24]: wait for this session's next message,
+    // print it on stderr and exit 2 so Claude Code wakes the model with it. Exit 0 (nothing) when a newer
+    // wait took over, or when this is not a checked Overvibe session.
+    if (!SELF || !PROOF) process.exit(0)
+    for (;;) {
+      let r: any
+      try {
+        r = await call('/api/inbox/wait', { from: SELF })
+      } catch (e: any) {
+        if (/not running/.test(e?.message ?? '')) { await Bun.sleep(3000); continue }
+        process.exit(0)
+      }
+      if (r.replaced) process.exit(0)
+      if (r.message) {
+        process.stderr.write(r.message + '\n')
+        process.exit(2)
+      }
+    }
+  } else if (cmd === 'accounts') {
+    // the Claude and Codex accounts, with usage and which one Claude in Chrome is paired with [T1111-26]
+    const st = await call('/api/state')
+    if (rest.includes('--json')) {
+      console.log(JSON.stringify({ chromeAccount: st.chromeAccount, accounts: st.accounts.map(({ dir, ...a }: any) => a) }, null, 2))
+    } else {
+      const chromeWord: Record<string, string> = { paired: 'paired with Claude in Chrome', 'set up': 'Chrome set up, not paired', installed: '', '': '' }
+      for (const a of st.accounts) {
+        const use = Object.entries(a.windows ?? {}).map(([k, w]: any) => `${k} ${Math.round(w.used)}%`).join(', ')
+        const bits = [a.paused ? 'paused: nothing new runs on it' : '', a.email, a.plan, use, a.tool === 'claude' ? chromeWord[a.chrome ?? ''] : '', a.tool === 'claude' && a.name === st.chromeAccount ? '--chrome sessions run here' : ''].filter(Boolean)
+        console.log(`${a.tool === 'codex' ? 'codex ' : ''}${a.name}${bits.length ? `  (${bits.join('; ')})` : ''}`)
+      }
+      if (!st.chromeAccount) console.error('no account is set for Claude in Chrome: set it in Settings, or pair the extension with one account')
+    }
+  } else if (cmd === 'read') {
+    // one message whole, by the id in the short line Overvibe typed into this session [T1111-22]
+    const id = rest.filter((a) => !a.startsWith('--')).join(' ').trim()
+    if (!/^[0-9a-f]{8}$/i.test(id)) throw new Error('usage: overvibe read <id>   (the 8-character id in the message line)')
+    const r = await call(`/api/peer-messages/${id.toLowerCase()}`)
+    console.log(rest.includes('--json') ? JSON.stringify(r.message, null, 2) : r.text)
+  } else if (cmd === 'peek') {
+    // what a running session's screen shows now (its last lines), without attaching or typing anything
+    const i = rest.indexOf('--lines')
+    const lines = i >= 0 ? Math.max(1, Math.min(500, Number(rest[i + 1]) || 40)) : 40
+    const name = rest.filter((a, k) => i < 0 || (k !== i && k !== i + 1)).join(' ').trim()
+    if (!name) throw new Error('usage: overvibe peek "<session name>" [--lines N]   (overvibe ls lists them)')
+    const hit = await liveSession(name)
+    const tmux = tmuxBin()
+    const p = Bun.spawn([tmux, '-L', SOCKET, 'capture-pane', '-p', '-J', '-t', `=${hit.tmux}:`, '-S', `-${lines}`], { stdout: 'pipe', stderr: 'pipe' })
+    const out = (await new Response(p.stdout).text()).replace(/\s+$/, '')
+    if ((await p.exited) !== 0) throw new Error(`could not read "${hit.title}"'s screen`)
+    console.log(`"${hit.title}" (${hit.kind === 'shell' ? 'shell' : hit.tool ?? 'claude'}, ${hit.status ?? 'running'}), last ${lines} lines:\n${out.split('\n').slice(-lines).join('\n')}`)
+  } else if (cmd === 'context') {
+    // what a session's context is made of, from its transcript; nothing is typed into it [T1112-107]
+    const name = rest.filter((a) => !a.startsWith('--')).join(' ').trim() || SELF
+    if (!name) throw new Error('usage: overvibe context ["<session name>"] [--json]   (default: this session)')
+    const r = await call(`/api/context?session=${encodeURIComponent(name)}`)
+    if (rest.includes('--json')) console.log(JSON.stringify(r, null, 2))
+    else if (!r.report) console.log(`"${r.session.title}": ${r.unavailable}`)
+    else {
+      const rep = r.report
+      const k = (n: number) => (n >= 999_500 ? `${(n / 1e6).toFixed(2)}M` : n >= 9_950 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+      const hm = (t: number) => new Date(t).toTimeString().slice(0, 5)
+      const of = rep.window ? ` of ${k(rep.window)} (${rep.percent}%, ${rep.windowNote})` : ' (window unknown)'
+      console.log(`"${r.session.title}" (${r.session.tool}${rep.model ? ', ' + rep.model : ''}): ${k(rep.total)} tokens${of}${rep.sinceCompact ? `, since last compact at ${hm(rep.compactedAt)}` : ''}`)
+      for (const c of rep.categories) {
+        const parts = c.parts?.length ? `   ${c.parts.slice(0, 6).map((p: any) => `${p.label} ${k(p.tokens)}`).join(', ')}` : ''
+        console.log(`  ${c.label.padEnd(24)}${k(c.tokens).padStart(7)} ${String(Math.round((c.tokens / Math.max(1, rep.total)) * 100)).padStart(3)}%${parts}`)
+      }
+      if (rep.top.length) {
+        console.log('Biggest items:')
+        for (const t of rep.top) console.log(`  ${tildAll(t.label)} · ${k(t.tokens)} · ${hm(t.at)}`)
+      }
+      console.log(`Total: the last request's exact input (${rep.exactInput.toLocaleString()}) plus what came after it. Parts are estimates (characters / 4) scaled to fit it.`)
+    }
+  } else if (cmd === 'tidy') {
+    const h = flag('hours')
+    if (h !== undefined && !(Number(h) > 0)) throw new Error('--hours takes a number above 0, e.g. --hours 4')
+    const r = await call(`/api/tidy${h ? `?hours=${encodeURIComponent(h)}` : ''}`)
+    // a shell's screen can hold anything typed into it (codes, keys): the page shows it to the owner, agents don't get it
+    for (const x of r.sessions) if (x.tool === 'shell') x.reply = null
+    if (rest.includes('--json')) console.log(JSON.stringify(r, null, 2))
+    else {
+      const idle = (ms: number) => (ms < 3600_000 ? `${Math.floor(ms / 60_000)}m` : ms < 48 * 3600_000 ? `${Math.floor(ms / 3600_000)}h` : `${Math.floor(ms / 86400_000)}d`)
+      const groups: [string, string][] = [['done', `Done, safe to close (idle ${r.hours} h or more, nothing asked)`], ['waiting', 'Waiting on you'], ['unsure', 'Unsure']]
+      for (const [v, label] of groups) {
+        const list = r.sessions.filter((x: any) => x.verdict === v)
+        console.log(`\n${label}: ${list.length}`)
+        for (const x of list) {
+          const tags = [x.tool, x.project, `idle ${idle(x.idleMs)}`, x.pinned ? 'pinned' : ''].filter(Boolean).join(', ')
+          console.log(`  "${x.title}" (${tags}): ${x.reason}`)
+          if (x.reply) {
+            const text = tildAll(String(x.reply)).replace(/\s+/g, ' ').trim()
+            console.log(`      ${x.replyFrom === 'screen' ? 'screen' : 'last reply'}: ${text.length > 300 ? '…' + text.slice(-300) : text}`)
+          }
+        }
+      }
+      console.error(`\nNothing was closed. Recommend which to close; the owner closes them in Overvibe (Close old sessions, or ⌘W on one).`)
+    }
+  } else if (cmd === 'search') {
+    // [T1112-18] agy's screen is searched, a shell's never (it can hold a code or a key, like overvibe tidy)
+    const lim = Number(flag('limit') ?? 10)
+    if (!Number.isInteger(lim) || lim < 1) throw new Error('--limit must be a whole number above 0')
+    const text = rest.filter((a, i) => !a.startsWith('--') && rest[i - 1] !== '--limit').join(' ').trim()
+    if (text.length < 2) throw new Error('usage: overvibe search "<text>" [--limit N] [--json]')
+    const r = await call(`/api/search?q=${encodeURIComponent(text)}&limit=${Math.min(50, lim)}&screens=agents`)
+    const rows = r.results.filter((x: any) => x.tool !== 'shell')
+    if (rest.includes('--json')) console.log(JSON.stringify(rows.map((x: any) => ({ title: x.title, tool: x.tool, cwd: x.cwd, project: x.project, state: x.state, old: !!x.old, sessionId: x.sessionId, tmux: x.state === 'running' && x.key !== x.sessionId ? x.key : null, at: x.at, hits: x.hits.map((h: any) => ({ at: h.at, role: h.role, text: tildAll(h.snippet) })) })), null, 2))
+    else if (!rows.length) console.log(`nothing found for "${text}"${r.ready ? '' : ' (still reading the conversations; try again in a minute)'}`)
+    else {
+      const ago = (t: number) => {
+        const m = Math.max(0, Math.round((Date.now() - t) / 60_000))
+        return m < 60 ? `${m}m ago` : m < 48 * 60 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`
+      }
+      const who: Record<string, string> = { you: 'you', claude: 'claude', codex: 'codex', peer: 'a session', screen: 'screen' }
+      for (const x of rows) {
+        console.log(`"${x.title}" (${x.tool}, ${x.state}${x.old ? ', older than 7 days' : ''}, ${tild(x.cwd)}, id ${x.sessionId ? shortId(x.sessionId) : '-'})`)
+        for (const h of x.hits) console.log(`  ${ago(h.at).padEnd(8)} ${(who[h.role] ?? h.role).padEnd(9)} ${tildAll(h.snippet)}`)
+      }
+      if (!r.ready) console.error('\n(still reading older conversations: some may be missing)')
+      console.error('\nopen one on the owner\'s screen: overvibe open "<name>"; a stopped one: overvibe resume "<name | id>"')
+    }
+  } else if (cmd === 'attach') {
+    // a running Overvibe session (any kind: Claude, Codex, agy, shell) in the terminal this runs in
+    const print = rest.includes('--print')
+    const name = rest.filter((a) => a !== '--print').join(' ').trim()
+    if (!name) throw new Error('usage: overvibe attach "<session name>"   (overvibe ls lists them)')
+    const hit = await liveSession(name)
+    if (hit.tmux === SELF) throw new Error('that is this session')
+    const tmux = tmuxBin()
+    const argv = [tmux, '-L', SOCKET, 'attach-session', '-t', `=${hit.tmux}`]
+    if (print) {
+      console.log(argv.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' '))
+      process.exit(0)
+    }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('attach needs a terminal (run it in a terminal window, not from a script); --print shows the tmux command')
+    console.error(`attaching to "${hit.title}"; Ctrl-b d detaches and leaves it running`)
+    // TMUX unset: Overvibe has its own tmux server, so attaching from inside another tmux is fine
+    const env = { ...process.env }
+    delete env.TMUX
+    const p = Bun.spawn(argv, { stdio: ['inherit', 'inherit', 'inherit'], env })
+    process.exit(await p.exited)
+  } else {
+    console.error(`overvibe: unknown command "${cmd}"\n\n${USAGE}`)
+    process.exit(1)
+  }
+} catch (e: any) {
+  console.error(`overvibe: ${tildAll(String(e.message))}`)
+  process.exit(1)
+}
+
+/** the first 200 bytes of a file (a shim says so on its second line; never read a whole tmux binary) */
+function head200(p: string): string {
+  const fd = openSync(p, 'r')
+  try {
+    const b = Buffer.alloc(200)
+    return b.toString('utf8', 0, readSync(fd, b, 0, 200, 0))
+  } finally {
+    closeSync(fd)
+  }
+}
+/**
+ * The real tmux, never Overvibe's tmux shim (src/tmuxshim.ts, first on PATH in every session, which blocks the
+ * very commands peek and attach run) [T1111-18]: OVERVIBE_TMUX_BIN (sessions get it), else the first tmux on
+ * PATH that is not a shim, else Homebrew's (Mac, Linuxbrew) or the distro's. src/env.ts realTmux does the same.
+ */
+function tmuxBin() {
+  const shim = (p: string) => {
+    try {
+      return head200(p).includes('# overvibe-tmux-shim')
+    } catch {
+      return false
+    }
+  }
+  const ok = (p: string | undefined): p is string => !!p && p.startsWith('/') && existsSync(p) && !shim(p)
+  if (ok(process.env.OVERVIBE_TMUX_BIN)) return process.env.OVERVIBE_TMUX_BIN
+  const dirs = [...(process.env.PATH ?? '').split(':').filter(Boolean), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/home/linuxbrew/.linuxbrew/bin']
+  return dirs.map((d) => join(d, 'tmux')).find(ok) ?? 'tmux'
+}
+
+/** a running Overvibe session by tmux id, session id, exact name, or the newest whose name contains it */
+async function liveSession(name: string) {
+  const s = await call('/api/state')
+  const live = s.sessions.filter((x: any) => x.where === 'deck' && x.tmux)
+  const want = name.toLowerCase()
+  const hit =
+    live.find((x: any) => x.tmux === name || x.sessionId === name) ??
+    live.find((x: any) => x.title.toLowerCase() === want) ??
+    live.filter((x: any) => x.title.toLowerCase().includes(want)).sort((a: any, b: any) => b.last - a.last)[0]
+  if (!hit) throw new Error(`no running Overvibe session called "${name}" (overvibe ls lists them; sessions outside Overvibe have no pane)`)
+  return hit
+}
