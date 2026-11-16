@@ -40,7 +40,11 @@ async function act(what: 'send' | 'task' | 'start' | 'skip') {
     one.value = r.request
     msg.value = r.msg
     await load()
-    refresh()
+    // Start session opens the new session, like New does [T1116-6]
+    if (what === 'start' && r.request.session) {
+      await refresh()
+      select(r.request.session)
+    } else refresh()
   } catch (e: any) {
     msg.value = e.message
   } finally {

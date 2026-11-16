@@ -21,10 +21,13 @@ ListAgents are Claude Code tools). In Claude Code, SendMessage also works betwee
 One command. Do not experiment first: the command below is complete (`overvibe --help` only prints usage).
 
 ```
-overvibe new --tool codex --cwd <repo folder> --name "<project>: <role>" \
+overvibe new --attach --tool codex --cwd <repo folder> --name "<project>: <role>" \
   --prompt "<the task: what, which files, what done looks like>. When done, run: overvibe send \"$OVERVIBE_SESSION\" \"<summary>\""
 ```
 
+- `--attach` by default: the session nests under your row in the sidebar, so the owner sees who started it,
+  and `overvibe stop --children` closes it with your other helpers. Leave it out only when the owner asks for
+  a session of its own, or for long-lived work that should outlive you (it then sits in its project's group).
 - `--tool claude` (the default), `--tool codex` or `--tool agy`. `--cwd` is required: the folder it works in.
 - A folder that does not exist yet: add `--mkdir` (mkdir -p, under your home folder only); without it
   `overvibe new` refuses a missing folder.
@@ -137,10 +140,10 @@ The total is exact (the last request's input as the API reported it); the parts 
 `--json` gives the same report. agy sessions answer "not available for agy". To shrink a session, recommend
 `/compact <what to keep>` to the owner, naming the biggest items it can drop.
 
-## One-shot helpers: attach, get the result, close
+## One-shot helpers: get the result, close
 
-For a side task whose result you need back (a check, a lookup in another repo, a second opinion), start the
-session attached to you; the sidebar shows it nested under your row:
+A side task whose result you need back (a check, a lookup in another repo, a second opinion) is attached like
+any session you start; the sidebar shows it nested under your row:
 
 ```
 overvibe new --attach --tool codex --cwd <repo folder> --name "<project>: <role>" \
@@ -149,7 +152,7 @@ overvibe new --attach --tool codex --cwd <repo folder> --name "<project>: <role>
 
 End your turn. When the result arrives, close it: `overvibe stop "<project>: <role>"` stops it and hides it
 from the list (the conversation is kept and can be resumed). `overvibe stop --children` closes all of yours.
-Leave out `--attach` for a session that should outlive you or belongs in its own project's group.
+Leave out `--attach` only as above: the owner asked for a session of its own, or the work should outlive you.
 From inside a session, `overvibe stop` reaches only you and the sessions and terminals you started.
 A terminal you open with `overvibe new --tool shell` (a test server, a links or idle check) stays in its own
 place in the sidebar, but it is yours to close: run `overvibe stop "<its name>"` when you are done with it, so
