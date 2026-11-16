@@ -5,7 +5,7 @@ describe('cliOf', () => {
   test('interactive CLIs', () => {
     expect(cliOf('claude')).toBe('claude')
     expect(cliOf('/Users/x/.local/bin/claude --model opus fix the bug')).toBe('claude')
-    expect(cliOf('/Users/x/.local/share/claude/versions/2.1.322 --resume 3855f249-a12a-498c-945e-7b2514894a93')).toBe('claude')
+    expect(cliOf('/Users/x/.local/share/claude/versions/2.1.322 --resume 7c1e2d40-5a9b-4f3e-8d21-0b6a9c3e5f17')).toBe('claude')
     expect(cliOf('node /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js')).toBe('claude')
     expect(cliOf('codex')).toBe('codex')
     expect(cliOf('/Users/x/.codex/packages/standalone/current/bin/codex resume')).toBe('codex')
@@ -76,7 +76,7 @@ describe('findCli', () => {
 })
 
 test('idFromArgs', () => {
-  const id = '3855f249-a12a-498c-945e-7b2514894a93'
+  const id = '7c1e2d40-5a9b-4f3e-8d21-0b6a9c3e5f17'
   expect(idFromArgs('claude', `claude --resume ${id}`)).toBe(id)
   expect(idFromArgs('claude', `claude -r ${id}`)).toBe(id)
   expect(idFromArgs('claude', `claude --session-id=${id}`)).toBe(id)

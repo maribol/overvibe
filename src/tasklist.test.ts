@@ -39,12 +39,12 @@ describe('ids', () => {
 describe('add', () => {
   test('a missing file gets the three sections, and the line reads back in the Tasks view', () => {
     const { dir, data } = scratch()
-    const r = addTask({ dir, dataDir: data, what: 'Fix the  login\nbutton', session: 'e411f976', now: NOW, tdState: null })
+    const r = addTask({ dir, dataDir: data, what: 'Fix the  login\nbutton', session: 'b2f0a6c3', now: NOW, tdState: null })
     expect(r.id).toBe('T1112-1')
     const text = readFileSync(r.file, 'utf8')
-    expect(text).toContain('## Waiting on the owner\n\n## To do\n- [ ] T1112-1 2026-11-12 Fix the login button · session e411f976\n')
+    expect(text).toContain('## Waiting on the owner\n\n## To do\n- [ ] T1112-1 2026-11-12 Fix the login button · session b2f0a6c3\n')
     const t = readTasks(r.file).tasks[0]!
-    expect(t).toMatchObject({ id: 'T1112-1', date: '2026-11-12', text: 'Fix the login button', sessions: ['e411f976'], section: 'todo', done: false })
+    expect(t).toMatchObject({ id: 'T1112-1', date: '2026-11-12', text: 'Fix the login button', sessions: ['b2f0a6c3'], section: 'todo', done: false })
   })
   test('--waiting goes under Waiting on the owner, newest first', () => {
     const { dir, data } = scratch()

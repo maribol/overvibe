@@ -86,44 +86,44 @@ describe('countsTip [T1112-117]', () => {
 describe('sessionTip [T1112-116]', () => {
   const files = [
     { root: '~/Work/a', tasks: [
-      line({ id: 'T1112-1', text: 'todo mine', sessions: ['e411f976'] }),
+      line({ id: 'T1112-1', text: 'todo mine', sessions: ['b2f0a6c3'] }),
       line({ id: 'T1112-2', text: 'todo other', sessions: ['bbbbbbbb'] }),
-      line({ id: 'T1112-3', text: 'waits on owner', sessions: ['e411f976'], section: 'waiting' }),
-      line({ id: 'T1112-4', text: 'ticked', sessions: ['e411f976'], done: true, section: 'done' }),
-      line({ id: 'T1112-5', text: 'ticked under To do', sessions: ['e411f976'], done: true }),
+      line({ id: 'T1112-3', text: 'waits on owner', sessions: ['b2f0a6c3'], section: 'waiting' }),
+      line({ id: 'T1112-4', text: 'ticked', sessions: ['b2f0a6c3'], done: true, section: 'done' }),
+      line({ id: 'T1112-5', text: 'ticked under To do', sessions: ['b2f0a6c3'], done: true }),
       line({ id: 'T1112-6', text: 'earlier id', sessions: ['cccccccc'] }),
     ] },
-    { root: '~/Work/a/sub', tasks: [line({ id: 'T1112-9', sessions: ['e411f976'] })] },
+    { root: '~/Work/a/sub', tasks: [line({ id: 'T1112-9', sessions: ['b2f0a6c3'] })] },
   ]
   test('its open tagged lines, waiting first, plus the project totals', () => {
-    const t = sessionTip(files, '~/Work/a/src', ['e411f976-5be7-4470-bb9d-204cc963de47'], '')!
+    const t = sessionTip(files, '~/Work/a/src', ['b2f0a6c3-91d4-4e7a-a5c8-3d1f6e0b7a29'], '')!
     // a line without an id (before the id rule) is open too and listed [T1112-117]
     expect(t.lines.map((x) => x.id)).toEqual(['T1112-3', 'T1112-1'])
     expect(t.lines[0]!.waiting).toBe(true)
     expect(t).toMatchObject({ more: 0, open: 4, waiting: 1 })
   })
   test('ids from earlier conversations of the same row count too', () => {
-    const t = sessionTip(files, '~/Work/a', ['e411f976-x', null, 'cccccccc-y'], '')!
+    const t = sessionTip(files, '~/Work/a', ['b2f0a6c3-x', null, 'cccccccc-y'], '')!
     expect(t.lines.map((x) => x.id)).toEqual(['T1112-3', 'T1112-1', 'T1112-6'])
   })
   test('no tagged lines: only the totals; no TASKS.md: null', () => {
     expect(sessionTip(files, '~/Work/a', ['dddddddd-1'], '')).toMatchObject({ lines: [], open: 4, waiting: 1 })
     expect(sessionTip(files, '~/Work/a', [null], '')!.lines).toEqual([])
-    expect(sessionTip(files, '~/Work/b', ['e411f976'], '')).toBeNull()
-    expect(sessionTip(files, '~/Work/ab', ['e411f976'], '')).toBeNull()
+    expect(sessionTip(files, '~/Work/b', ['b2f0a6c3'], '')).toBeNull()
+    expect(sessionTip(files, '~/Work/ab', ['b2f0a6c3'], '')).toBeNull()
   })
   test('the nearest TASKS.md wins', () => {
     expect(fileForCwd(files, '~/Work/a/sub/x')!.root).toBe('~/Work/a/sub')
-    expect(sessionTip(files, '~/Work/a/sub', ['e411f976'], '')!.lines.map((x) => x.id)).toEqual(['T1112-9'])
+    expect(sessionTip(files, '~/Work/a/sub', ['b2f0a6c3'], '')!.lines.map((x) => x.id)).toEqual(['T1112-9'])
   })
   test('up to max lines, then how many more', () => {
-    const many = [{ root: '~/r', tasks: Array.from({ length: 9 }, (_, i) => line({ id: `T1112-${i}`, sessions: ['e411f976'] })) }]
-    const t = sessionTip(many, '~/r', ['e411f976'], '')!
+    const many = [{ root: '~/r', tasks: Array.from({ length: 9 }, (_, i) => line({ id: `T1112-${i}`, sessions: ['b2f0a6c3'] })) }]
+    const t = sessionTip(many, '~/r', ['b2f0a6c3'], '')!
     expect(t.lines.length).toBe(6)
     expect(t.more).toBe(3)
   })
   test('"start fresh" hides older lines from both the list and the totals', () => {
-    const t = sessionTip([{ root: '~/r', tasks: [line({ date: '2026-11-01', sessions: ['e411f976'] }), line({ date: '2026-11-12', sessions: ['e411f976'] })] }], '~/r', ['e411f976'], '2026-11-10')!
+    const t = sessionTip([{ root: '~/r', tasks: [line({ date: '2026-11-01', sessions: ['b2f0a6c3'] }), line({ date: '2026-11-12', sessions: ['b2f0a6c3'] })] }], '~/r', ['b2f0a6c3'], '2026-11-10')!
     expect(t).toMatchObject({ open: 1 })
     expect(t.lines.length).toBe(1)
   })

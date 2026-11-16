@@ -28,7 +28,7 @@ Run them in the project folder or pass `--dir <folder>`. The file is TASKS.md at
 its three sections when it is missing. The line it writes:
 
 ```
-- [ ] T1112-15 2026-11-12 <what> · session e411f976
+- [ ] T1112-15 2026-11-12 <what> · session b2f0a6c3
 ```
 
 The id is `T<MMDD>-<n>` (the next free one for today, never reused). The session tag is the first 8 characters
@@ -56,7 +56,7 @@ heading for the day (add the heading if today has none):
 ## Done
 
 ### 2026-11-12
-- [x] T1112-15 2026-11-12 <what> · <commit> · checked: bun test, live run on a scratch repo · session e411f976
+- [x] T1112-15 2026-11-12 <what> · <commit> · checked: bun test, live run on a scratch repo · session b2f0a6c3
 ```
 
 Commit the tick with the work when it is already verified, otherwise in one follow-up commit after the check.
