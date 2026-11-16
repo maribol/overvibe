@@ -4,10 +4,11 @@
 // overlaps (a URL that holds a path, a package name that looks like a path, a /compact with paths in its note)
 // are settled here and nowhere else. Pure: the terminal is read through `Screen`, nothing here touches the DOM.
 //
-// Order: /compact, full URLs, the user's own (links.json), GitHub issues, npm packages, local servers, Reddit, task ids,
+// Order: ! commands, /compact, full URLs, the user's own (links.json), GitHub issues, npm packages, local servers, Reddit, task ids,
 // commit shas, sites without https://, file paths, bare file names.
 
 import { compactAt, type Row } from './compactLink'
+import { bangAt } from './bangLink'
 import { hostUrl } from './hostLink'
 import { MAX_MATCH, fillTemplate, type UserLink } from '../linkuser'
 
@@ -16,6 +17,7 @@ export type Target =
   | { kind: 'url'; url: string }
   | { kind: 'path'; path: string }
   | { kind: 'compact'; args: string }
+  | { kind: 'run'; cmd: string }
   | { kind: 'task'; id: string }
   | { kind: 'copy'; text: string }
 
@@ -38,6 +40,8 @@ export type Link = {
 
 /** what the session's folder adds: set by the page from /api/links */
 export type LinkCtx = {
+  /** a `! <command>` is a link to run it (sessions Overvibe runs) [T1114-1] */
+  run?: boolean
   /** the session takes /compact (Claude Code, Codex) */
   compact?: boolean
   /** the folder is in a git repo */
@@ -50,7 +54,7 @@ export type LinkCtx = {
   user?: UserMatcher[]
 }
 
-export type Screen = { row(y: number): Row | undefined }
+export type Screen = { row(y: number): Row | undefined; cols?: number }
 
 type Found = { text: string; at: number; target: Target; label: string; card?: string; verify?: 'commit' }
 type LineMatcher = { id: string; kind: 'line'; when?: (c: LinkCtx) => boolean; find(line: string, c: LinkCtx): Found[] }
@@ -155,6 +159,15 @@ const TASK_RE = /(?<![\w/.-])T(\d\d)(\d\d)-(\d{1,4})(?![\w/-])/g
 const SHA_RE = /(?<![\w./:#@-])([0-9a-f]{7,40})(?![\w/-]|\.\w)/g
 
 export const BUILTIN: Matcher[] = [
+  // a `! <command>` the agent asks the owner to run, over every row it wraps to; paths inside it are not [T1114-1]
+  {
+    id: 'run', kind: 'screen', when: (c) => !!c.run,
+    find(s, y) {
+      const hit = bangAt((yy) => s.row(yy), y, s.cols ?? 0)
+      if (!hit) return []
+      return [{ matcher: 'run', text: '! ' + hit.cmd, at: 0, range: { start: { x: hit.x, y: hit.top }, end: { x: hit.endX, y: hit.bottom } }, target: { kind: 'run', cmd: hit.cmd }, label: 'Run…', card: '' }]
+    },
+  },
   // the whole suggested /compact, over every row it wraps to, is one link; paths inside it are not [T1112-91]
   {
     id: 'compact', kind: 'screen', when: (c) => !!c.compact,

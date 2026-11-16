@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Every project's TASKS.md in one place: what waits on the owner (all projects) on top, then the
 // chosen project's To do and what was done today. A line's "· session <id>" links to that session.
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { CheckCircle2, Circle, Hand, MessageSquareReply, Search } from 'lucide-vue-next'
 import { current, deck, openSession, projectOf, select } from '../deck'
 import { countsTip, isRecent, type TaskLine as Task } from '../../taskview'
@@ -10,6 +10,8 @@ import FollowupModal from './FollowupModal.vue'
 import FollowupAllModal from './FollowupAllModal.vue'
 
 const q = ref('')
+const flash = ref('')
+let flashTimer: ReturnType<typeof setTimeout> | undefined
 const pick = ref<string>('')
 // a click on a line in a sidebar row's task tooltip opens this view on that project [T1112-116]
 watch(tasksPick, (f) => {
@@ -82,9 +84,15 @@ watch(tasksFocus, async (f) => {
   const has = files.value.filter((x) => !x.copyOf && x.tasks.some((t) => t.id === f.id))
   const file = has.find((x) => f.cwd === x.root || f.cwd.startsWith(x.root + '/')) ?? has[0]
   if (file) pick.value = file.file
-  q.value = f.id
   showOld.value = true
   if (file?.tasks.some((t) => t.id === f.id && t.done)) showDone.value = true
+  // the line itself: scrolled to and lit for a moment, the rest of the list still there [T1112-144]
+  q.value = ''
+  flash.value = f.id
+  await nextTick()
+  document.querySelector(`[data-task-id="${CSS.escape(f.id)}"]`)?.scrollIntoView({ block: 'center' })
+  clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => (flash.value = ''), 2600)
 }, { immediate: true })
 </script>
 
@@ -114,7 +122,7 @@ watch(tasksFocus, async (f) => {
       <section v-if="waiting.length" class="mt-6">
         <div class="col-label mb-2 flex items-center gap-1.5"><Hand :size="13" /> Waiting on you · all projects · {{ waiting.length }}</div>
         <div class="card divide-y divide-line">
-          <div v-for="(x, i) in waiting" :key="'w' + i" class="flex items-start gap-3 px-4 py-2.5">
+          <div v-for="(x, i) in waiting" :key="'w' + i" class="flex items-start gap-3 px-4 py-2.5 transition-colors duration-700" :data-task-id="x.id" :class="flash && x.id === flash ? 'task-flash' : ''">
             <Circle :size="15" class="mt-0.5 flex-none text-[var(--color-chip-amber-fg)]" />
             <div class="min-w-0 flex-1">
               <p class="cursor-pointer text-[13.5px] leading-snug" title="Follow up with agent" @click="followOn(x, x.root, x.project)">{{ x.text }}</p>
@@ -142,7 +150,7 @@ watch(tasksFocus, async (f) => {
         <div class="col-label mb-2">To do · {{ todo.length }}</div>
         <div v-if="!todo.length" class="text-[13px] text-faint">Nothing open.</div>
         <div v-else class="card divide-y divide-line">
-          <div v-for="(x, i) in todo" :key="'t' + i" class="flex items-start gap-3 px-4 py-2.5">
+          <div v-for="(x, i) in todo" :key="'t' + i" class="flex items-start gap-3 px-4 py-2.5 transition-colors duration-700" :data-task-id="x.id" :class="flash && x.id === flash ? 'task-flash' : ''">
             <Circle :size="15" class="mt-0.5 flex-none text-faint" />
             <div class="min-w-0 flex-1">
               <p class="cursor-pointer text-[13.5px] leading-snug" title="Follow up with agent" @click="followOn(x, chosen!.f.root, chosen!.name)">{{ x.text }}</p>
@@ -159,7 +167,7 @@ watch(tasksFocus, async (f) => {
       <section v-if="showDone && doneToday.length" class="mt-6">
         <div class="col-label mb-2">Done today · {{ doneToday.length }}</div>
         <div class="card divide-y divide-line">
-          <div v-for="(x, i) in doneToday" :key="'d' + i" class="flex items-start gap-3 px-4 py-2.5">
+          <div v-for="(x, i) in doneToday" :key="'d' + i" class="flex items-start gap-3 px-4 py-2.5 transition-colors duration-700" :data-task-id="x.id" :class="flash && x.id === flash ? 'task-flash' : ''">
             <CheckCircle2 :size="15" class="mt-0.5 flex-none text-[var(--color-chip-green-fg)]" />
             <p class="min-w-0 flex-1 text-[13px] leading-snug text-muted">{{ x.text }}</p>
           </div>

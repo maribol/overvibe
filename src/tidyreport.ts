@@ -45,10 +45,11 @@ export function screenTail(screen: string, n = 15): string | null {
   return lines.slice(-n).join('\n') || null
 }
 
-export async function tidyReport(sessions: ViewSession[], hours = DEFAULT_HOURS) {
+/** `only`: just that row (a session about to be suspended keeps its verdict [T1116-3]) */
+export async function tidyReport(sessions: ViewSession[], hours = DEFAULT_HOURS, only?: string) {
   const panes = new Map((await listSessions()).map((p) => [p.name, p]))
   const pins = new Set(getSettings().pins ?? [])
-  const live = sessions.filter((s) => s.where === 'deck' && s.tmux && s.kind !== 'login')
+  const live = sessions.filter((s) => s.where === 'deck' && s.tmux && s.kind !== 'login' && (!only || s.key === only))
   const now = Date.now()
   const rows: TidyRow[] = []
   for (const s of live) {

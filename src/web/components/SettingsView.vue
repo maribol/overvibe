@@ -4,6 +4,7 @@
 // the sidebar's project order.
 import { computed, nextTick, ref, watch } from 'vue'
 import { ChevronDown, ChevronUp, EyeOff, GripVertical, LogIn, Plus, RefreshCw, Sparkles } from 'lucide-vue-next'
+import TelegramPanel from './TelegramPanel.vue'
 import Spinner from './Spinner.vue'
 import WorkRootField from './WorkRootField.vue'
 import { openSetup } from '../setup'
@@ -104,6 +105,10 @@ const remoteOn = (a: Account) => !(deck.settings.remoteOff ?? []).includes(a.nam
 async function setRemote(a: Account, on: boolean) {
   await api('/api/settings', { remoteControl: { name: a.name, on } })
   refresh()
+}
+async function setSuspend(min: number) {
+  await api('/api/settings', { suspendIdleMin: min })
+  deck.settings.suspendIdleMin = min
 }
 async function setSidebar(body: { sidebarAccounts?: boolean; sidebarOrder?: 'project' | 'newest' }) {
   await api('/api/settings', body)
@@ -376,6 +381,17 @@ const deckSessions = computed(() => deck.sessions.filter((s) => s.where === 'dec
             <button class="btn btn-primary btn-sm" :disabled="!switchTo || busy === 'all'" @click="switchAll"><Spinner v-if="busy === 'all'" :size="13" /> Switch</button>
             <p v-if="msg" class="w-full text-[12.5px] text-muted">{{ msg }}</p>
           </div>
+          <!-- suspend idle sessions [T1116-3] -->
+          <div class="card mt-3 p-4" data-suspend-setting>
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="text-[13.5px] font-medium">Suspend idle sessions after</span>
+              <select class="input !w-40 !py-1.5" :value="deck.settings.suspendIdleMin ?? 30" @change="setSuspend(Number(($event.target as HTMLSelectElement).value))">
+                <option v-for="m in [15, 30, 60, 120, 240]" :key="m" :value="m">{{ m < 60 ? `${m} minutes` : `${m / 60} hour${m > 60 ? 's' : ''}` }}</option>
+                <option :value="0">Never</option>
+              </select>
+            </div>
+            <p class="mt-2 text-[12.5px] leading-relaxed text-muted">Each Claude Code or Codex session holds 300-800 MB while it waits. One that has been idle this long is stopped to free it: its last screen stays in its row, and Revive (or a message from another session) resumes the same conversation. Sessions working, waiting on you, running background work or with messages queued are never suspended.</p>
+          </div>
         </section>
 
         <!-- permission mode [T1110-85]; the default as one plain switch, off on a new install [T1112-99] -->
@@ -478,6 +494,8 @@ const deckSessions = computed(() => deck.sessions.filter((s) => s.where === 'dec
         </section>
 
         <SkillsPanel v-show="current === 'skills'" data-section="skills" />
+
+        <TelegramPanel v-if="current === 'telegram'" data-section="telegram" />
 
         <!-- spawn limits [T1110-81] -->
         <section v-show="current === 'limits'" data-section="limits">

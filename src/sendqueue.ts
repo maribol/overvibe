@@ -38,6 +38,8 @@ export type Queued = {
   full?: string
   /** the owner's own words from the page (Tasks > Follow up): typed with no header, not logged as an agent message [T1112-14] */
   owner?: boolean
+  /** the owner's `! <command>` from the page: typed into Claude Code's shell mode [T1114-1] */
+  shell?: boolean
 }
 
 const QUIET_MS = 4000
@@ -69,6 +71,15 @@ const NOT_TYPING = /^(?:\x1b\[<\d+;\d+;\d+[mM]|\x1b\[M[\s\S]{3}|\x1b\[[IO]|\x1b\
 /** pids of the tmux clients this server attached for browser terminals; their keys are timed above */
 const deckClients = new Set<number>()
 export const deckClient = (pid: number, on: boolean) => (on ? deckClients.add(pid) : deckClients.delete(pid))
+/**
+ * When someone last typed in each session: the page's keys (timed above), and other tmux clients (a Terminal tab
+ * running overvibe attach). Never tmux's activity for the page's own clients: those tick on every redraw, so every
+ * open session would look typed in a moment ago (2026-11-16: no idle session was ever suspended) [T1116-3].
+ */
+export async function typedTimes(): Promise<(tmux: string) => number> {
+  const other = await clientActivity(deckClients)
+  return (tmux) => Math.max(lastKey.get(tmux) ?? 0, other.get(tmux) ?? 0)
+}
 
 /**
  * Every byte the browser terminal sends for a session goes through here. Returns true when the deck
@@ -84,11 +95,11 @@ export function ownerInput(tmux: string, data: string | Uint8Array, write: () =>
 }
 
 /** Type `text` into a session with the owner's input held back meanwhile, then replay what they typed. */
-export async function typeHeld(tmux: string, text: string) {
+export async function typeHeld(tmux: string, text: string, shell = false) {
   if (held.has(tmux)) throw new Error('already typing into it')
   held.set(tmux, [])
   try {
-    await typeInto(tmux, text)
+    await typeInto(tmux, text, shell)
   } finally {
     const h = held.get(tmux) ?? []
     held.delete(tmux)
@@ -191,7 +202,7 @@ async function deliver(q: Queued) {
   q.delivering = Date.now()
   save()
   try {
-    await typeHeld(q.tmux, q.body)
+    await typeHeld(q.tmux, q.body, !!(q.owner && q.shell))
   } catch (e) {
     delete q.delivering
     save()
@@ -281,12 +292,18 @@ export function discard(id: string) {
   console.log(`[send] discarded by the owner: to "${q.toName}" from "${q.from}"`)
 }
 
+let deadHook: ((tmux: string) => Promise<boolean>) | null = null
+/** sessions.ts: what to do when a message waits for a session whose terminal is not running (revive a suspended one) */
+export const onDeadTarget = (f: (tmux: string) => Promise<boolean>) => void (deadHook = f)
+
 // every 1.5 s: each session with something waiting gets its next message if it is free now
 setInterval(async () => {
   if (!queue.length) return
   const alive = new Set((await listSessions()).map((p) => p.name))
   for (const tmux of new Set(queue.map((q) => q.tmux))) {
     if (!alive.has(tmux)) {
+      // a suspended session: revive it, and the next tick types into it once it is ready [T1116-3]
+      if (deadHook && (await deadHook(tmux).catch((e) => (console.log(`[send] revive ${tmux}: ${e?.message ?? e}`), false)))) continue
       for (const q of queued(tmux)) if (q.why !== 'its terminal is not running') (q.why = 'its terminal is not running'), save()
       continue
     }

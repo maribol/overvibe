@@ -23,6 +23,16 @@ curl -fsSL https://overvibe.dev/install.sh | sh
   menus become buttons, and a Stats view shows working time per tool, who's waiting on you and which agents
   message each other most.
 
+**Three agents, one task, no hands.** One request to Claude: it plans, starts Codex to build it, has agy review
+the change, sends Codex the fixes worth making, runs the tests itself and approves. Nobody touched it after the first
+message.
+
+<p align="center">
+  <a href="https://elasticfunnels-cdn.b-cdn.net/581/assets/images/handoff-captioned-f1.mp4"><img src=".github/assets/handoff.webp" width="800" alt="Claude hands a feature to Codex, agy reviews Codex's change, Codex fixes what the review found, and Claude runs the tests and approves"></a>
+</p>
+
+<p align="center"><sub>A 72-second cut of a real run on a demo machine. <a href="https://elasticfunnels-cdn.b-cdn.net/581/assets/images/handoff-realtime-f1.mp4">The whole run at real speed</a> (5 min 18 s, unedited).</sub></p>
+
 <table>
   <tr>
     <td width="40%"><img src=".github/assets/stats.webp" alt="Stats view: sessions and working time per tool, sessions waiting on you, messages between agents, busiest projects and usage per account"></td>

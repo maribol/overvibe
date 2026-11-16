@@ -5,7 +5,7 @@
 // Attached children (deck new --attach) sit indented right under their parent's row, in first-seen order; a child
 // whose parent is not in the list (closed, hidden, pinned, filtered out) is a normal row.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { BrushCleaning, Hand, X, ChevronDown, ChevronRight, CircleAlert, MessageCircleQuestion, Moon, Rocket, Pin, PinOff, Plus, Search, SquareTerminal, Star } from 'lucide-vue-next'
+import { BrushCleaning, Hand, X, ChevronDown, ChevronRight, CircleAlert, MessageCircleQuestion, CirclePause, Moon, Rocket, Pin, PinOff, Plus, Search, SquareTerminal, Star } from 'lucide-vue-next'
 import { SESSION_MIME } from '../../sessionref'
 import { fileForCwd } from '../../taskview'
 import { taskFiles, tasksOn } from '../tasks'
@@ -24,7 +24,7 @@ function toggle(g: string) {
 }
 
 const groupOf = (s: Session) => projectOf(s)
-const isLive = (s: Session) => s.where !== 'past' && s.status !== 'ended'
+const isLive = (s: Session) => s.where !== 'past' && (s.status !== 'ended' || !!s.suspended) // a suspended one keeps its place [T1116-3]
 
 // pinned: in pin order (newest pin last). One row per pin; when a session id shows up twice, the running copy wins.
 const pinned = computed(() => {
@@ -40,7 +40,7 @@ const pinned = computed(() => {
 
 // in first-seen order too: the server sends sessions newest-activity first, which would reshuffle this box
 const coordinators = computed(() => deck.sessions.filter((s) => s.kind === 'claude' && isCoordinator(s) && !isPinned(s) && s.where !== 'past' && !(s.where === 'deck' && !s.tmux)).sort((a, b) => seen(a.key) - seen(b.key)))
-const isClosed = (s: Session) => s.where === 'past' || (s.where === 'deck' && !s.tmux)
+const isClosed = (s: Session) => s.where === 'past' || (s.where === 'deck' && !s.tmux && !s.suspended)
 const hay = (s: Session) => `${s.title} ${s.cwd} ${s.project ?? ''} ${s.lastPrompt ?? ''}`.toLowerCase()
 
 // closed sessions, newest first; searching looks through all of them
@@ -286,6 +286,7 @@ function onOut(e: PointerEvent) {
           <span v-if="s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="stoppedOn(s.apiError)"><CircleAlert :size="14" class="flex-none text-[var(--color-danger)]" /></span>
           <span v-if="s.tidy && !s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="doneHint(s.tidy)"><BrushCleaning :size="14" class="flex-none opacity-70" /></span>
           <span v-if="s.owes && !s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="`Waiting on you: ${s.owes}`"><Hand :size="14" class="flex-none text-[var(--color-st-wait)]" /></span>
+          <span v-if="s.suspended" class="flex flex-none" title="Suspended to free memory. Open it to revive it."><CirclePause :size="14" class="flex-none text-faint" /></span>
           <SquareTerminal v-else-if="s.where === 'terminal'" :size="12" class="flex-none text-faint opacity-60" />
           <Moon v-else-if="s.where === 'background'" :size="12" class="flex-none text-faint opacity-60" />
           <span v-if="s.tool && s.tool !== 'claude'" class="tag bg-[var(--color-chip-blue-bg)] text-[var(--color-chip-blue-fg)]">{{ s.tool }}</span>
@@ -307,6 +308,7 @@ function onOut(e: PointerEvent) {
           <span v-if="s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="stoppedOn(s.apiError)"><CircleAlert :size="13" class="flex-none text-[var(--color-danger)]" /></span>
           <span v-if="s.tidy && !s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="doneHint(s.tidy)"><BrushCleaning :size="13" class="flex-none opacity-70" /></span>
           <span v-if="s.owes && !s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="`Waiting on you: ${s.owes}`"><Hand :size="13" class="flex-none text-[var(--color-st-wait)]" /></span>
+          <span v-if="s.suspended" class="flex flex-none" title="Suspended to free memory. Open it to revive it."><CirclePause :size="13" class="flex-none text-faint" /></span>
           <span :class="dot[s.status]"></span>
         </button>
       </div>
@@ -350,6 +352,7 @@ function onOut(e: PointerEvent) {
               <span v-if="s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="stoppedOn(s.apiError)"><CircleAlert :size="14" class="flex-none text-[var(--color-danger)]" /></span>
               <span v-if="s.tidy && !s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="doneHint(s.tidy)"><BrushCleaning :size="14" class="flex-none opacity-70" /></span>
               <span v-if="s.owes && !s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="`Waiting on you: ${s.owes}`"><Hand :size="14" class="flex-none text-[var(--color-st-wait)]" /></span>
+              <span v-if="s.suspended" class="flex flex-none" title="Suspended to free memory. Open it to revive it."><CirclePause :size="14" class="flex-none text-faint" /></span>
               <SquareTerminal v-else-if="s.where === 'terminal'" :size="12" class="flex-none text-faint opacity-60" />
               <Moon v-else-if="s.where === 'background'" :size="12" class="flex-none text-faint opacity-60" />
               <span v-if="s.tool && s.tool !== 'claude'" class="tag bg-[var(--color-chip-blue-bg)] text-[var(--color-chip-blue-fg)]">{{ s.tool }}</span>

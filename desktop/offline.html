@@ -6,6 +6,8 @@
     <title>Overvibe</title>
     <style>
       :root { color-scheme: dark; }
+      /* no title bar on a Mac [T1116-4]: the page moves the window, its buttons stay clickable */
+      html { -webkit-app-region: drag; } button, a { -webkit-app-region: no-drag; }
       body { margin: 0; height: 100vh; display: grid; place-items: center; background: #191920; color: #ececef; font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; }
       .card { max-width: 420px; text-align: center; padding: 32px; }
       .glyph { width: 44px; height: 44px; margin: 0 auto 16px; border-radius: 11px; background: #6d5ef6; display: grid; place-items: center; color: #fff; font: 600 18px ui-monospace, Menlo, monospace; }

@@ -7,7 +7,7 @@ const screen = (rows: (string | Row)[]): Screen => ({ row: (y) => (typeof rows[y
 const ALL: LinkCtx = { git: true, github: 'maribol/overvibe', tasks: true, compact: true }
 /** [matcher, text, where it goes] for each link on a one-row screen */
 const on = (line: string, c: LinkCtx = ALL) =>
-  linksAt(screen([line]), 0, c).map((l) => [l.matcher, l.text, 'url' in l.target ? l.target.url : 'path' in l.target ? l.target.path : 'id' in l.target ? l.target.id : 'text' in l.target ? l.target.text : l.target.args])
+  linksAt(screen([line]), 0, c).map((l) => [l.matcher, l.text, 'url' in l.target ? l.target.url : 'path' in l.target ? l.target.path : 'id' in l.target ? l.target.id : 'text' in l.target ? l.target.text : 'cmd' in l.target ? l.target.cmd : l.target.args])
 const kinds = (line: string, c: LinkCtx = ALL) => on(line, c).map(([m, t]) => `${m}:${t}`)
 
 describe('the types that were there before, unchanged [T1112-137]', () => {

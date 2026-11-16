@@ -329,6 +329,7 @@ try {
     // another live agent in the same checkout [T1111-10]
     if (r.sharing?.length) console.log(`note: ${r.sharing.map((t: string) => `"${t}"`).join(', ')} ${r.sharing.length === 1 ? 'is' : 'are'} already working in this checkout. Two agents editing one checkout can overwrite each other's changes; for a helper that edits code, stop this one and start it with --worktree`)
     if (r.worktree) console.log(`in its own worktree ${tild(r.worktree.path)} on branch ${r.worktree.branch} (from ${String(r.worktree.base).slice(0, 7)}); when it stops you get the branch and how to merge it`)
+    for (const n of r.depsNotes ?? []) console.log(n) // [T1112-141]
     if (attach) console.log(`close it when you no longer need it: overvibe stop "${r.name}"`)
     if (tool === 'shell') console.log(`open it here: overvibe attach "${r.name}"${SELF ? `; stop it when done: overvibe stop "${r.name}"` : ''}`)
     else console.log(`message it: overvibe send "${r.name}" "<message>"`)
@@ -370,10 +371,11 @@ try {
     console.log(`message it: overvibe send "${r.name}" "<message>"`)
   } else if (cmd === 'ls') {
     const s = await call('/api/state')
-    const live = s.sessions.filter((x: any) => x.where !== 'past' && x.tmux !== null || x.where === 'terminal' || x.where === 'background')
+    // a suspended one is listed too: overvibe send revives it [T1116-3]
+    const live = s.sessions.filter((x: any) => x.where !== 'past' && x.tmux !== null || x.suspended || x.where === 'terminal' || x.where === 'background')
     if (rest.includes('--json')) console.log(JSON.stringify(live, null, 2))
     else {
-      for (const x of live) console.log(`${x.status.padEnd(8)} ${(x.kind === 'shell' ? 'shell' : x.tool ?? 'claude').padEnd(6)} ${x.where === 'deck' ? 'overvibe' : 'outside '} ${String((x.attached ? '↳ ' : '') + x.title).slice(0, 40).padEnd(40)} ${tild(x.cwd)}${x.mode === 'ask' ? '  (ask mode)' : ''}${x.tokens ? `  ${tokens(x.tokens)}` : ''}`)
+      for (const x of live) console.log(`${(x.suspended ? 'suspended' : x.status).padEnd(9)} ${(x.kind === 'shell' ? 'shell' : x.tool ?? 'claude').padEnd(6)} ${x.where === 'deck' ? 'overvibe' : 'outside '} ${String((x.attached ? '↳ ' : '') + x.title).slice(0, 40).padEnd(40)} ${tild(x.cwd)}${x.mode === 'ask' ? '  (ask mode)' : ''}${x.tokens ? `  ${tokens(x.tokens)}` : ''}`)
       // on stderr, so a script reading the list is unaffected; agents see it and skip raw tmux
       if (live.length) console.error('\nsee what one is doing: overvibe peek "<name>"; ask it: overvibe send "<name>" "<message>" (never tmux directly)')
     }

@@ -7,5 +7,5 @@ declare module '*.vue' {
 
 /** Set by the desktop app's preload (desktop/preload.cjs); absent in a browser. */
 interface Window {
-  deckDesktop?: { on(cb: (cmd: string) => void): void }
+  deckDesktop?: { on(cb: (cmd: string) => void): void; platform?: string }
 }

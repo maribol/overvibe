@@ -8,13 +8,15 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { timingSafeEqual, randomBytes } from 'node:crypto'
-import { checkoutOf, makeWorktree, type Worktree } from './src/worktree'
+import { checkoutOf, installDeps, makeWorktree, type Worktree } from './src/worktree'
 import { checkSender, escapeHeaders, wrap, type Sender } from './src/peer'
 import { DATA_DIR, DEMO, HOME, SCOPE, WORK_ROOT, cleanEnv, inScope, tildify, untildify } from './src/env'
 import { attachArgv, countSize, listSessions } from './src/tmux'
 import { guardedInput } from './src/mouseguard'
 import { deckClient, deliverNow, discard, kick as kickQueue, ownerInput, queueView } from './src/sendqueue'
-import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view } from './src/sessions'
+import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view, suspendSession, reviveSession, savedScreen, autoSuspend } from './src/sessions'
+import { SUSPEND_CHOICES } from './src/suspend'
+import { addBot, changeBot, requestAct, requestList, requestOne, requestsOn, requestsOpen, startTelegram, telegramView } from './src/telegram'
 import { accountFor, accountsOf, chromeAccountNow, getSettings, isMode, isPaused, modeFor, modeUnsaved, needsChrome, refusePaused, routeFor, ruleFor, setSettings, type Mode } from './src/routing'
 import { loadRouter, routerActive } from './src/localrouter'
 import { chromeOf, ensureAccount, fullUntil, hasAccounts, keyOf, listAccounts, loginArgv, probe, probeAll, toolStatus, forgetToolStatus, validName, watchLogin, type AccountTool } from './src/accounts'
@@ -39,7 +41,7 @@ import { findLink, openFile, tailOf, wideRoots } from './src/openfile'
 import { previewFile } from './src/filepreview'
 import { LINKS_FILE, commitsIn, repoInfo, userLinksReport } from './src/linkinfo'
 import { codexFile } from './src/codex'
-import { contextFor } from './src/contextapi'
+import { contextFor, pickRow } from './src/contextapi'
 import { byId as peerById, read as readPeerLog } from './src/peerlog'
 import { MAX_UPLOAD, locate, safeName, saveUpload } from './src/drop'
 import { getSeen, markSeen, news } from './src/news'
@@ -82,6 +84,16 @@ const withQueue = <T extends { where: string; tmux: string | null }>(s: T) => {
 const scopedView = async (o: { all?: boolean } = {}) => {
   const v = await view(o)
   return SCOPE ? { ...v, sessions: v.sessions.filter((s) => inScope(s.cwd)) } : v
+}
+// The Context meter asks /api/context after each reply of every open session; the full list reads every
+// session's screen 3 times, so building it per ask was ~7 lists a second [T1116-2]. The meter only needs a
+// row's ids: reuse a list up to 5 s old, and build a new one only when the asked session is not in it.
+let ctxRows: { at: number; p: Promise<Awaited<ReturnType<typeof scopedView>>['sessions']> } | null = null
+async function contextRows(q: string) {
+  const fresh = () => (ctxRows = { at: Date.now(), p: scopedView({ all: true }).then((v) => v.sessions) }).p
+  if (!ctxRows || Date.now() - ctxRows.at > 5000) return fresh()
+  const rows = await ctxRows.p.catch(() => null)
+  return rows && pickRow(rows, q) ? rows : fresh()
 }
 /** Open a login terminal for an account and watch it, so the account refreshes itself once the login lands [T1110-84]. */
 // the permission mode a new or resumed session may get, capped at its starter's (src/modecap.ts) [T1112-99]
@@ -292,7 +304,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     const accounts = listAccounts(undefined, { hidden: getSettings().hiddenAccounts }).map((a) => (DEMO && a.email ? { ...a, email: `${a.name}@example.com` } : a)).map((a) => (a.tool === 'claude' ? { ...a, chrome: chromeOf(a.name) } : a)).map((a) => (isPaused(a.name, a.tool) ? { ...a, paused: true } : a))
     const v = await scopedView()
     refreshTidy()
-    return json({ ...v, sessions: v.sessions.map((s) => withQueue(s)).map((s) => (tidyDone.has(s.key) && s.status !== 'busy' && s.status !== 'waiting' ? { ...s, tidy: tidyDone.get(s.key) } : owesNow(s) ? { ...s, owes: tidyOwes.get(s.key)!.reason } : s)), accounts, tools: await toolStatus(), home: tildify(HOME), homeAbs: HOME, settings: getSettings(), chromeAccount: chromeAccountNow(), router: routerActive(), self: selfUpdate(), pending: pendingAll().filter((x) => inScope(x.cwd)), focus: getFocus(), build: buildId() })
+    return json({ ...v, sessions: v.sessions.map((s) => withQueue(s)).map((s) => (tidyDone.has(s.key) && s.status !== 'busy' && s.status !== 'waiting' ? { ...s, tidy: tidyDone.get(s.key) } : owesNow(s) ? { ...s, owes: tidyOwes.get(s.key)!.reason } : s)), accounts, tools: await toolStatus(), home: tildify(HOME), homeAbs: HOME, settings: getSettings(), chromeAccount: chromeAccountNow(), router: routerActive(), self: selfUpdate(), pending: pendingAll().filter((x) => inScope(x.cwd)), focus: getFocus(), build: buildId(), requests: requestsOn() ? { open: requestsOpen() } : null })
   }
   // what Send feedback's "Include version and OS" adds, shown in the dialog before it goes [T1112-120]
   if (p === '/api/feedback/env' && req.method === 'GET') return json(await feedbackEnv())
@@ -366,9 +378,13 @@ async function api(req: Request, url: URL): Promise<Response> {
   }
   // what a session's context is made of, from its transcript (overvibe context, the header's Context meter) [T1112-107]
   if (p === '/api/context' && req.method === 'GET') {
-    const r = contextFor((await scopedView({ all: true })).sessions, url.searchParams.get('session') ?? '')
+    const q = url.searchParams.get('session') ?? ''
+    const r = contextFor(await contextRows(q), q)
     return 'error' in r ? bad(r.error, r.status) : json(r)
   }
+  // a suspended session's last screen (ANSI), shown under its Revive overlay [T1116-3]
+  const scr = /^\/api\/sessions\/([a-z0-9]+)\/screen$/.exec(p)
+  if (scr && req.method === 'GET') return json({ screen: savedScreen(scr[1]!) })
   if (p === '/api/summary' && req.method === 'GET') {
     const id = url.searchParams.get('id') ?? ''
     if (!/^[0-9a-f-]{36}$/.test(id)) return bad('bad session id')
@@ -410,6 +426,33 @@ async function api(req: Request, url: URL): Promise<Response> {
   // overvibe ls --past: stopped and past sessions (closed children and hidden rows flagged)
   if (p === '/api/past' && req.method === 'GET') {
     return json({ sessions: (await pastSessions()).filter((s) => inScope(s.cwd)) })
+  }
+  // Telegram bots [T1113-3]: Settings > Telegram (tokens never leave the server)
+  if (p === '/api/telegram' && req.method === 'GET') return json(telegramView())
+  // the Requests view: Telegram reports and their plans, apart from TASKS.md
+  if (p === '/api/requests' && req.method === 'GET') {
+    const rid = url.searchParams.get('rid')
+    try {
+      return json(rid ? requestOne(rid) : { requests: requestList() })
+    } catch (e: any) {
+      return bad(e.message, 404)
+    }
+  }
+  if (p === '/api/requests/act') {
+    if (body.from || proofOnly) return bad('only the owner acts on requests', 403)
+    try {
+      return json(await requestAct(String(body.rid ?? ''), body.act, body.text))
+    } catch (e: any) {
+      return bad(e.message)
+    }
+  }
+  if (p === '/api/telegram/add' || p === '/api/telegram/bot') {
+    if (body.from || proofOnly) return bad('only the owner can change Telegram bots', 403)
+    try {
+      return json(p === '/api/telegram/add' ? await addBot(body.token) : await changeBot(body))
+    } catch (e: any) {
+      return bad(e.message)
+    }
   }
   // cross-agent skills: the library, where each skill is linked, clashes, and the CLIs' own skills [T1110-64]
   if (p === '/api/skills' && req.method === 'GET') return json(skillsReport())
@@ -544,6 +587,8 @@ async function api(req: Request, url: URL): Promise<Response> {
         return bad(e.message)
       }
     }
+    // its dependencies, where the main checkout has them installed [T1112-141]
+    const depsNotes = worktree ? await installDeps(worktree, String(body.cwd)) : []
     try {
       // a first message from another session: no header lookalikes in it [T1110-78]
       const prompt = by && body.prompt ? escapeHeaders(String(body.prompt)) : body.prompt
@@ -555,7 +600,7 @@ async function api(req: Request, url: URL): Promise<Response> {
       const full = chromeAt && chromeAt === account ? fullUntil(listAccounts('claude', { all: true }).find((a) => a.name === account)) : null
       const resets = full && Number.isFinite(full) ? ` (resets ${new Date(full).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })})` : ''
       const chromeNote = full ? `${account} is the account paired with Claude in Chrome, and its usage is used up${resets}: this session may stop at its first reply. Ask the owner to sign the extension in to another account, or wait` : chromeAt === null ? 'no Claude account is paired with Claude in Chrome, so the browser tools may not connect (overvibe accounts shows each account)' : chromeAt && chromeAt !== account ? `Claude in Chrome is paired with ${chromeAt}, not ${account}: the browser tools may not connect (leave out --account, or use --account ${chromeAt})` : undefined
-      return json({ ...rec, sharing: sharing.map((x) => x.title), ...(chromeNote ? { chromeNote } : {}), ...(pausedNote ? { pausedNote } : {}) })
+      return json({ ...rec, sharing: sharing.map((x) => x.title), ...(chromeNote ? { chromeNote } : {}), ...(pausedNote ? { pausedNote } : {}), ...(depsNotes.length ? { depsNotes } : {}) })
     } catch (e: any) {
       if (/^no skill /.test(e.message)) return bad(e.message)
       throw e
@@ -624,7 +669,10 @@ async function api(req: Request, url: URL): Promise<Response> {
     // refused whole rather than cut: the owner's message arrives exactly as written or not at all [T1112-92]
     if (text.length > 8000) return bad(`that message is ${text.length} characters; 8000 is the most that can be typed in`)
     try {
-      return json(await ownerSay(String(body.to), text))
+      // shell: the page's "Run in this session" for a ! command [T1114-1]; the text must be that command
+      const shell = body.shell === true
+      if (shell && !/^!\s*\S/.test(text)) return bad('a shell run starts with !')
+      return json(await ownerSay(String(body.to), text, shell))
     } catch (e: any) {
       return bad(e.message)
     }
@@ -730,6 +778,11 @@ async function api(req: Request, url: URL): Promise<Response> {
     if (body.tasksView !== undefined) next.tasksView = !!body.tasksView // [T1112-16]
     // Settings > Sidebar [T1112-138]: the account usage rows on or off, and projects or newest at the top
     if (body.sidebarAccounts !== undefined) next.sidebarAccounts = !!body.sidebarAccounts
+    // Settings > Running sessions: suspend idle agents after this many minutes, 0 = never [T1116-3]
+    if (body.suspendIdleMin !== undefined) {
+      if (!(SUSPEND_CHOICES as readonly number[]).includes(Number(body.suspendIdleMin))) return bad(`suspend after: one of ${SUSPEND_CHOICES.join(', ')} minutes`)
+      next.suspendIdleMin = Number(body.suspendIdleMin)
+    }
     if (body.sidebarOrder !== undefined) {
       if (body.sidebarOrder !== 'project' && body.sidebarOrder !== 'newest') return bad('sidebar order: project or newest')
       next.sidebarOrder = body.sidebarOrder
@@ -843,6 +896,18 @@ async function api(req: Request, url: URL): Promise<Response> {
       return bad(e.message)
     }
   }
+  // suspend to free memory, revive in the same row [T1116-3]
+  const sus = /^\/api\/sessions\/([a-z0-9]+)\/(suspend|revive)$/.exec(p)
+  if (sus) {
+    if (!getRecord(sus[1]!)) return bad('unknown session', 404)
+    try {
+      if (sus[2] === 'suspend') return json(await suspendSession(sus[1]!, 'owner'))
+      const r = await reviveSession(sus[1]!)
+      return json({ tmux: r.tmux })
+    } catch (e: any) {
+      return bad(e.message)
+    }
+  }
   const m = /^\/api\/sessions\/([a-z0-9]+)\/(stop|forget)$/.exec(p)
   if (m) {
     if (!getRecord(m[1]!)) return bad('unknown session', 404)
@@ -875,6 +940,7 @@ async function api(req: Request, url: URL): Promise<Response> {
 
 startTranscripts()
 startSearch() // [T1112-18]
+startTelegram() // Telegram bots read their linked groups and report to the owner [T1113-3]
 startSkills() // sync the skills library into each CLI now and on every change [T1110-64]
 startUsagePing() // on by default, at most once a day, waits for setup's Welcome step [T1110-72, T1112-101]
 
@@ -883,6 +949,7 @@ const KEEPALIVE_MS = 3 * 60 * 60 * 1000
 setTimeout(() => probeAll(getSettings().hiddenAccounts).catch(() => {}), 5_000)
 setInterval(() => probeAll(getSettings().hiddenAccounts).catch(() => {}), KEEPALIVE_MS)
 // a coordinator hears when a session it started ends on its own, hits a limit or waits on an answer [T1111-11]
+setInterval(() => autoSuspend().catch((e) => console.log(`[suspend] ${e?.message ?? e}`)), 60_000)
 setInterval(() => watchChildren().catch((e) => console.log(`[watch] ${e?.message ?? e}`)), WATCH_MS)
 
 // the login link holds the token: keep it in a private file, never in the log

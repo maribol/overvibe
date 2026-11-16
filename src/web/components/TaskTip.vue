@@ -6,7 +6,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { Hand } from 'lucide-vue-next'
 import { setView, type Session } from '../deck'
 import { fileForCwd } from '../../taskview'
-import { taskFiles, tasksPick, tipFor } from '../tasks'
+import { taskFiles, tasksFocus, tasksPick, tipFor } from '../tasks'
 
 const props = defineProps<{ s: Session; left: number; top: number }>()
 const emit = defineEmits<{ enter: []; leave: []; done: [] }>()
@@ -22,6 +22,13 @@ watch(() => [props.top, tip.value], () => {
   })
 }, { immediate: true })
 
+// a line with an id opens the Tasks view on that line, scrolled to and lit [T1112-144]
+function openLine(id: string | null | undefined) {
+  if (!id) return openTasks()
+  tasksFocus.value = { id, cwd: props.s.cwd }
+  setView('tasks')
+  emit('done')
+}
 function openTasks() {
   const f = fileForCwd(taskFiles.value, props.s.cwd)
   if (!f) return
@@ -39,7 +46,7 @@ function openTasks() {
     <p v-if="s.question" class="mt-1 line-clamp-2 text-[var(--color-st-wait)]">Needs you: {{ s.question }}</p>
     <ul v-if="tip.lines.length" class="mt-2 space-y-0.5">
       <li v-for="(x, i) in tip.lines" :key="x.id ?? i">
-        <button class="flex w-full items-baseline gap-1.5 rounded px-1 py-0.5 text-left hover:bg-[var(--color-row-hover)]" title="Open the Tasks view on this project" @click="openTasks">
+        <button class="flex w-full items-baseline gap-1.5 rounded px-1 py-0.5 text-left hover:bg-[var(--color-row-hover)]" title="Open this line in the Tasks view" @click="openLine(x.id)">
           <Hand v-if="x.waiting" :size="11" class="mt-[2px] flex-none self-start text-[var(--color-chip-amber-fg)]" />
           <span v-if="x.id" class="pill-mono flex-none text-[11px] text-faint">{{ x.id }}</span>
           <span class="min-w-0 text-ink-soft">{{ x.text }}<span v-if="x.waiting" class="text-[var(--color-chip-amber-fg)]"> · waiting on you</span></span>

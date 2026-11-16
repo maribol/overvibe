@@ -38,6 +38,8 @@ overvibe new --tool codex --cwd <repo folder> --name "<project>: <role>" \
   another session also work; a read-only helper (a review, a lookup, a test run) can share the folder. If
   `overvibe new` prints `note: "..." is already working in this checkout`, and the new helper edits code,
   stop it and start it again with `--worktree`.
+  Where the repo has node_modules installed, the new worktree gets its own install from the lockfile (bun,
+  npm, pnpm or yarn) before the helper starts; `overvibe new` prints a line saying so, or that it failed.
   When it stops you get its branch, commits, any uncommitted files and the merge command; merge it, then
   remove the worktree and branch yourself (Overvibe never deletes them, and never remove one with
   uncommitted work in it).
@@ -71,7 +73,8 @@ by name. If one is refused as paused, ask the owner; do not pick another account
 
 ```
 overvibe send "<project>: <role>" "<message>"   # any Overvibe agent session, any tool; typed into its prompt
-overvibe ls                                      # each session's status (busy/idle/needs-you), tool, folder; --json for tmux ids
+overvibe ls                                      # each session's status (busy/idle/needs-you/suspended), tool, folder; --json for tmux ids
+                                                 # suspended = stopped while idle to free memory; overvibe send revives it
 overvibe stop "<project>: <role>"                # close it once the work is in (the conversation is kept)
 overvibe stop --children                         # close every session you started with --attach, and the terminals you started
 overvibe ls --past [--cwd <folder>]              # stopped and past sessions, newest first
@@ -151,6 +154,12 @@ From inside a session, `overvibe stop` reaches only you and the sessions and ter
 A terminal you open with `overvibe new --tool shell` (a test server, a links or idle check) stays in its own
 place in the sidebar, but it is yours to close: run `overvibe stop "<its name>"` when you are done with it, so
 the owner is not left closing your test terminals.
+
+## A command only the owner may run
+
+When a command needs the owner (a production deploy, a login), put it on a line of its own as `! <command>`. In
+Overvibe that line is a link: the owner ⌘-clicks it, reads it in a confirm dialog, and runs it in your session (Claude
+Code: the output comes back into your conversation) or in a new terminal. Nothing runs without that click.
 
 ## Answering an Overvibe message
 

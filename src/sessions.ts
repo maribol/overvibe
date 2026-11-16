@@ -3,12 +3,13 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AGY_BIN, CLAUDE_BIN, CODEX_BIN, CONFIG, DATA_DIR, HOME, REMOTE_CONTROL, WORK_ROOT, cleanEnv, tildify, untildify, type Tool } from './env'
-import { capture, forgetEnv, killSession, listSessions, newSession, sendKeys as keys, typeInto, typeLiteral, type Pane } from './tmux'
+import { capture, captureStyled, forgetEnv, killSession, listSessions, newSession, sendKeys as keys, typeInto, typeLiteral, type Pane } from './tmux'
 import { cliOf, findCli, idFromArgs, isShellCommand, parsePs, pickConversation, under, type Proc } from './handcli'
 import { ensureAccount, envFor, type AccountTool } from './accounts'
 import { asksDeploy } from './deployask'
 import { apiErrorOf, askingOf, meta as tmeta, metas as tmetas, nameOf, notePids, type Tokens } from './transcripts'
-import { busyReason, enqueue, typeHeld } from './sendqueue'
+import { busyReason, enqueue, onDeadTarget, queued, typedTimes, typeHeld } from './sendqueue'
+import { isToolShell, keepRunning, pendingTimer, suspendMinutes } from './suspend'
 import { codexInfo, codexSessions } from './codex'
 import { realActivity } from './activity'
 import { projectFor } from './projects'
@@ -18,7 +19,7 @@ import { checkoutOf, worktreeReport, type Worktree } from './worktree'
 import { cleanBody, hashSecret, newSecret, notAgent, noteHeader, wrap, wrapShort, type Sender } from './peer'
 import { randomBytes } from 'node:crypto'
 import { hookSettings } from './inbox'
-import { remoteFor, modeFor, type Mode } from './routing'
+import { getSettings, remoteFor, modeFor, type Mode } from './routing'
 import { loginShell } from './platform'
 import { append as logPeer } from './peerlog'
 import { claudeScreenBusy } from './tidy'
@@ -60,6 +61,8 @@ export type DeckRecord = {
   hand?: Hand
   /** conversations this row was in before (a hand-started Claude's /clear starts a new one), newest last, for its task tags [T1112-116] */
   pastIds?: string[]
+  /** stopped while idle to free memory [T1116-3]: its last screen is in <data dir>/screens/<tmux>.ans; Revive resumes it in this row */
+  suspended?: { at: number; by: 'auto' | 'owner'; /** what Close old sessions said of it as it stopped: its row and Revive card show it */ verdict?: 'done' | 'waiting' | 'unsure'; reason?: string; deploy?: boolean }
 }
 export type Hand = { tool: Tool; pid: number; startedAt: number; cwd: string; shellName: string; argsId?: string; resumed?: boolean }
 
@@ -378,6 +381,8 @@ export async function stopFor(o: { session?: string; children?: boolean; from: s
     // close first: stopping itself ends the caller's own process
     if (r.attached) {
       r.closedAt = Date.now()
+      // a Codex helper's conversation id is learned lazily: learn it now, or its rollout comes back as a past row [T1112-140]
+      if (r.tool === 'codex' && !r.sessionId && !r.hand) learnCodexId(r)
       if (r.sessionId) hide(r.sessionId, true)
     }
     save()
@@ -511,6 +516,131 @@ export async function watchChildren(now = Date.now()) {
   }
 }
 
+// Suspend and revive [T1116-3] (src/suspend.ts says when). The screen is saved before the CLI stops, so the
+// row can still show where it was; reviving resumes the same conversation in the same tmux name.
+const SCREENS = join(DATA_DIR, 'screens')
+const screenFile = (tmux: string) => join(SCREENS, `${tmux.replace(/[^a-z0-9]/gi, '')}.ans`)
+/** The saved last screen of a suspended session (ANSI), or null. */
+export function savedScreen(tmux: string): string | null {
+  const r = getRecord(tmux)
+  if (!r?.suspended) return null
+  try {
+    return readFileSync(screenFile(tmux), 'utf8')
+  } catch {
+    return null
+  }
+}
+// What else keeps a session alive [T1116-3]: its own tool shells (a run_in_background job, a Monitor) and timers in
+// its CLI (/loop wakeups, cron jobs), which all die with it. The transcript scan is cached by file and mtime.
+const timerCache = new Map<string, { mtime: number; timer: string | null; at: number }>()
+async function holdsOf(row: ViewSession, now = Date.now()): Promise<{ jobs: number; timer: string | null }> {
+  const pane = (await listSessions()).find((p) => p.name === row.tmux)
+  const procs = await processes()
+  const jobs = pane ? procs.filter((p) => p.ppid === pane.pid && isToolShell(p.args)).length : 0
+  let timer: string | null = null
+  if ((row.tool ?? 'claude') === 'claude' && row.sessionId) {
+    const { claudeFile } = await import('./context')
+    const f = claudeFile(row.sessionId, tmeta(row.sessionId)?.file)
+    if (f) {
+      const mtime = statSync(f).mtimeMs
+      const c = timerCache.get(f)
+      // the answer depends on the clock too (a wakeup's time passes): read again at least every 5 min
+      if (c && c.mtime === mtime && now - c.at < 5 * 60_000) timer = c.timer
+      else {
+        timer = pendingTimer(readFileSync(f, 'utf8').split('\n'), now)
+        timerCache.set(f, { mtime, timer, at: now })
+      }
+    }
+  }
+  return { jobs, timer }
+}
+
+export async function suspendSession(tmux: string, by: 'auto' | 'owner', all?: ViewSession[]) {
+  const r = getRecord(tmux)
+  if (!r) throw new Error('unknown session')
+  all ??= (await view()).sessions
+  const row = all.find((x) => x.key === tmux)
+  if (!row) throw new Error('unknown session')
+  // the owner may suspend one that is idle at once; the timer also waits its minutes
+  const why = keepRunning(row, { now: Date.now(), afterMs: by === 'owner' ? 0 : suspendMinutes(getSettings().suspendIdleMin) * 60_000, queued: queued(tmux).length, ...(await holdsOf(row)) })
+  if (why) throw new Error(`"${row.title}" stays running: ${why}.`)
+  const screen = await captureStyled(tmux)
+  mkdirSync(SCREENS, { recursive: true })
+  writeFileSync(screenFile(tmux), screen ?? '', { mode: 0o600 })
+  // done / waiting on you / unsure, read now while its screen and last reply are there (no idle minimum)
+  const { tidyReport } = await import('./tidyreport')
+  const t = (await tidyReport(all, 0, tmux).catch(() => null))?.sessions[0]
+  r.suspended = { at: Date.now(), by, ...(t ? { verdict: t.verdict, reason: t.reason } : {}), ...(row.deploy ? { deploy: true } : {}) }
+  save()
+  meantToStop.add(tmux) // its parent is not told it "ended on its own"
+  await killSession(tmux)
+  console.log(`[suspend] ${by}: "${row.title}" (${tmux})`)
+  return { ok: true }
+}
+const reviving = new Map<string, Promise<DeckRecord>>()
+/** Resume a suspended session in its own row: same tmux name, conversation, account, mode and links. */
+export function reviveSession(tmux: string): Promise<DeckRecord> {
+  const going = reviving.get(tmux)
+  if (going) return going
+  const p = (async () => {
+    const r = getRecord(tmux)
+    if (!r?.suspended) throw new Error('that session is not suspended')
+    if ((await listSessions()).some((x) => x.name === tmux)) {
+      r.suspended = undefined
+      save()
+      return r
+    }
+    const keep = { parent: r.parent, parentId: r.parentId, attached: r.attached, named: r.named, autoNamed: r.autoNamed, pastIds: r.pastIds }
+    const next = await startSession({ tool: r.tool ?? 'claude', cwd: r.cwd, account: r.account, name: r.name, resume: r.sessionId, tmux, worktree: r.worktree, mode: r.mode ?? 'auto' })
+    for (const [k, v] of Object.entries(keep)) if (v !== undefined) (next as any)[k] = v
+    save()
+    console.log(`[suspend] revived "${r.name}" (${tmux})`)
+    return next
+  })().finally(() => reviving.delete(tmux))
+  reviving.set(tmux, p)
+  return p
+}
+// a message queued for a suspended session revives it; the queue types it once its input box is up
+onDeadTarget(async (tmux) => {
+  if (!getRecord(tmux)?.suspended) return false
+  await reviveSession(tmux)
+  return true
+})
+// sessions suspended before verdicts were kept: read theirs from the conversation's last reply (the screen is gone)
+let backfilled = false
+async function backfillVerdicts() {
+  backfilled = true
+  const todo = records.filter((r) => r.suspended && !r.suspended.verdict && r.sessionId)
+  if (!todo.length) return
+  const [{ classify }, { lastReplyStateOf }, { codexLastReply }] = await Promise.all([import('./tidy'), import('./summary'), import('./codex')])
+  for (const r of todo) {
+    const codex = r.tool === 'codex'
+    const st = codex ? { reply: codexLastReply(r.sessionId), answered: false } : lastReplyStateOf(r.sessionId)
+    const v = classify({ kind: 'claude', tool: r.tool ?? 'claude', status: 'idle', idleMs: Date.now() - (tmeta(r.sessionId)?.lastAt ?? r.suspended!.at), prompt: null, question: null, reply: st.reply, answered: st.answered }, 0)
+    r.suspended = { ...r.suspended!, verdict: v.verdict, reason: v.reason }
+  }
+  save()
+}
+
+/** Every minute: suspend the agents idle longer than Settings > Running sessions allows. */
+export async function autoSuspend(now = Date.now()) {
+  if (!backfilled) await backfillVerdicts().catch((e) => console.log(`[suspend] verdicts: ${e?.message ?? e}`))
+  const min = suspendMinutes(getSettings().suspendIdleMin)
+  if (!min) return
+  const { sessions } = await view()
+  const typed = await typedTimes()
+  for (const row of sessions) {
+    if (row.where !== 'deck' || !row.tmux) continue
+    // a revived (or just started) one counts from its start, not from its conversation's last reply
+    const since = Math.max(typed(row.tmux), getRecord(row.tmux)?.createdAt ?? 0)
+    const base = { now, afterMs: min * 60_000, typedAt: since, queued: queued(row.tmux).length }
+    // the cheap checks first; the process list and transcript only for one that would go
+    if (keepRunning(row, base)) continue
+    if (keepRunning(row, { ...base, ...(await holdsOf(row, now)) })) continue
+    await suspendSession(row.tmux, 'auto', sessions).catch((e) => console.log(`[suspend] ${e?.message ?? e}`))
+  }
+}
+
 /** The page's Stop: same worktree notice to the coordinator as overvibe stop [T1110-79]. */
 export async function stopFromPage(tmux: string) {
   const r = getRecord(tmux)
@@ -572,7 +702,20 @@ const pidAlive = (pid?: number) => {
     return false
   }
 }
-async function liveAgents(): Promise<LiveAgent[]> {
+// Each `claude agents --json` is a full CLI start (~0.3 s CPU). The page polls, the watcher, `overvibe ls`
+// and the search all ask at once: unshared, that was ~6.5 starts a second [T1116-2]. Callers share one
+// run in flight and reuse its answer for AGENTS_TTL.
+const AGENTS_TTL = 1500
+let agentsRun: { at: number; p: Promise<LiveAgent[]> } | null = null
+function liveAgents(): Promise<LiveAgent[]> {
+  if (agentsRun && Date.now() - agentsRun.at < AGENTS_TTL) return agentsRun.p
+  const p = askAgents()
+  agentsRun = { at: Date.now(), p }
+  // the TTL counts from the answer, so a slow run is not asked again the moment it lands
+  void p.then(() => agentsRun?.p === p && (agentsRun.at = Date.now()))
+  return p
+}
+async function askAgents(): Promise<LiveAgent[]> {
   let now: LiveAgent[] | null = null
   try {
     const p = Bun.spawn([CLAUDE_BIN, 'agents', '--json'], { env: cleanEnv(), stdout: 'pipe', stderr: 'ignore' })
@@ -636,6 +779,12 @@ attached?: boolean
   tokens?: Tokens
   /** view({ all: true }) only: an attached child its parent closed, or a row the owner hid */
   closed?: boolean
+  /** suspended to free memory (when, and whether the owner or the idle timer did it) [T1116-3] */
+  suspended?: number
+  suspendedBy?: 'auto' | 'owner'
+  /** its verdict as it was suspended: done (safe to close), waiting (on you) or unsure, with the reason */
+  suspendedVerdict?: 'done' | 'waiting' | 'unsure'
+  suspendedReason?: string
   hidden?: boolean
   /** deck sessions started in ask mode (the tool's own approval prompts) [T1110-85] */
   mode?: 'ask'
@@ -820,8 +969,12 @@ export async function view(o: { all?: boolean } = {}) {
   for (const r of records) {
     const pane = panes.find((p) => p.name === r.tmux)
     if (!pane && r.kind !== 'claude') continue // a shell or login terminal that exited: nothing to resume
-    if (!pane && r.closedAt && !o.all) continue // an attached child its parent closed (its transcript row is hidden too)
     if (r.tool === 'codex' && !r.sessionId && !r.hand) learnCodexId(r)
+    if (!pane && r.closedAt && !o.all) {
+      // an attached child its parent closed: its row goes, and so does its conversation's past row [T1112-140]
+      if (r.sessionId) seen.add(r.sessionId)
+      continue
+    }
     const l = r.sessionId ? liveById.get(r.sessionId) : undefined
     const tm = r.sessionId ? tmeta(r.sessionId) : undefined
     const claude = (r.tool ?? 'claude') === 'claude'
@@ -836,6 +989,7 @@ export async function view(o: { all?: boolean } = {}) {
       // transcript; its spinner with a timer on screen says busy [T1112-115]
       if (claude && r.kind === 'claude' && status !== 'busy' && (await claudeSpinning(r.tmux, pane.activity))) status = 'busy'
     }
+    if (pane && r.suspended) (r.suspended = undefined), save() // resumed some other way (overvibe resume)
     const prompt = pane ? await promptOf(r, pane.activity) : null
     if (prompt) status = 'waiting'
     if (pane && r.kind === 'claude' && claude) maybeAutoName(r, tm, isBusy(l) ? 'busy' : l?.status, pane.activity)
@@ -848,6 +1002,7 @@ export async function view(o: { all?: boolean } = {}) {
       ...(pane && claude && r.kind === 'claude' && r.sessionId && !isBusy(l) && !prompt && apiErrorOf(r.sessionId) ? { apiError: apiErrorOf(r.sessionId)!.text } : {}),
       ...((r.kind === 'shell' || r.hand) && pane?.path && pane.path !== r.cwd ? { here: tildify(pane.path), hereProject: projectFor(pane.path) } : {}),
       ...(!pane && r.closedAt ? { closed: true } : {}),
+      ...(!pane && r.suspended ? { suspended: r.suspended.at, suspendedBy: r.suspended.by, suspendedVerdict: r.suspended.verdict, suspendedReason: r.suspended.reason, ...(r.suspended.verdict === 'done' ? { tidy: r.suspended.reason } : r.suspended.verdict === 'waiting' ? { owes: r.suspended.reason } : {}), ...(r.suspended.deploy ? { deploy: true } : {}) } : {}),
       ...(r.mode === 'ask' && r.kind === 'claude' && !r.hand ? { mode: 'ask' as const } : {}),
       ...(r.hand ? { hand: true } : {}),
       ...(r.pastIds?.length ? { pastIds: r.pastIds } : {}),
@@ -1024,6 +1179,11 @@ export async function moveToFolder(sessionId: string, newCwd: string, account: s
   const from = rec?.cwd ?? live?.cwd ?? tmeta(sessionId)?.cwd
   if (!from) throw new Error('Cannot find where this session lives.')
   if (from === to) throw new Error('It is already in that folder.')
+  // no message yet, so no conversation file to carry over [T1112-143]: known before anything is stopped
+  const src = projectDir(from)
+  const dst = projectDir(to)
+  const hasTranscript = existsSync(join(src, `${sessionId}.jsonl`))
+  if (!hasTranscript && !rec) throw new Error(`No transcript for it in ${tildify(src)}`)
 
   // stop it. liveAgents keeps a vanished row for 20 s (see lastLive), so "gone" is the process itself:
   // the deck pane's process (claude runs as the pane command) or the Terminal tab's pid
@@ -1042,10 +1202,14 @@ export async function moveToFolder(sessionId: string, newCwd: string, account: s
     await Bun.sleep(250)
   }
 
+  // nothing said yet: the same session, started fresh in the new folder (same name, same tab)
+  if (!hasTranscript) {
+    forget(rec!.tmux)
+    const next = await startSession({ cwd: to, account, name: rec!.name, tmux: opt.keepTmux ? rec!.tmux : undefined, mode: rec!.mode })
+    Object.assign(next, { named: rec!.named, autoNamed: rec!.autoNamed, ...linksOf(rec!) }), save()
+    return next
+  }
   // move its files
-  const src = projectDir(from)
-  const dst = projectDir(to)
-  if (!existsSync(join(src, `${sessionId}.jsonl`))) throw new Error(`No transcript for it in ${tildify(src)}`)
   mkdirSync(dst, { recursive: true })
   renameSync(join(src, `${sessionId}.jsonl`), join(dst, `${sessionId}.jsonl`))
   if (existsSync(join(src, sessionId))) renameSync(join(src, sessionId), join(dst, sessionId))
@@ -1127,7 +1291,8 @@ export async function focusOn(to: string, from: string) {
 export async function sendTo(to: string, text: string, from: string, checked: Sender = from ? 'legacy' : 'outside') {
   const { sessions } = await view()
   const want = to.trim().toLowerCase()
-  const live = sessions.filter((s) => s.where === 'deck' && s.tmux)
+  // a suspended session counts: the queue revives it, then types the message once it is ready [T1116-3]
+  const live = sessions.filter((s) => s.where === 'deck' && (s.tmux || s.suspended))
   // a part of a name prefers an agent over a terminal with a similar name [T1111-16]
   const partial = live.filter((s) => s.title.toLowerCase().includes(want)).sort((a, b) => Number(!!notAgent(a.kind, '')) - Number(!!notAgent(b.kind, '')) || b.last - a.last)
   const hit = live.find((s) => s.tmux === to || s.sessionId === to) ?? live.find((s) => s.title.toLowerCase() === want) ?? partial[0]
@@ -1145,14 +1310,15 @@ export async function sendTo(to: string, text: string, from: string, checked: Se
   // a short line, the whole text kept for overvibe read <id> [T1111-22]
   const id = randomBytes(4).toString('hex')
   const body = wrapShort({ name: fromName, tool: fromTool, sender: sender ? checked : 'outside' }, text, id)
-  const target = getRecord(hit.tmux!)
+  const to_ = hit.tmux ?? hit.key
+  const target = getRecord(to_)
   const viaHook = (hit.tool ?? 'claude') === 'claude' && !!target?.hook
   const full = viaHook ? wrap({ name: fromName, tool: fromTool, sender: sender ? checked : 'outside' }, text) : undefined
   // typed only once nobody is using its input box; until then it waits in its queue [T1110-60]
   const tool = hit.tool ?? 'claude'
-  const r = await enqueue({ tmux: hit.tmux!, tool, toName: hit.title, toSession: hit.sessionId, from: fromName, fromSession: sender?.sessionId || null, text, body, ...(viaHook ? { hook: true, full } : {}) })
+  const r = await enqueue({ tmux: to_, tool, toName: hit.title, toSession: hit.sessionId, from: fromName, fromSession: sender?.sessionId || null, text, body, ...(viaHook ? { hook: true, full } : {}) })
   // the whole message, kept for overvibe messages and Messages > Between agents [T1111-12]
-  logPeer({ id, at: Date.now(), from: fromName, fromSession: sender?.sessionId || null, fromTmux: sender?.tmux ?? null, fromTool: fromTool || null, sender: sender ? checked : 'outside', to: hit.title, toSession: hit.sessionId, toTmux: hit.tmux, toTool: tool, text })
+  logPeer({ id, at: Date.now(), from: fromName, fromSession: sender?.sessionId || null, fromTmux: sender?.tmux ?? null, fromTool: fromTool || null, sender: sender ? checked : 'outside', to: hit.title, toSession: hit.sessionId, toTmux: to_, toTool: tool, text })
   return { to: hit.title, tool, ...r }
 }
 
@@ -1161,14 +1327,16 @@ export async function sendTo(to: string, text: string, from: string, checked: Se
  * session as if the owner typed it, so no header, through the same queue as overvibe send (never over a
  * draft, never into an open menu).
  */
-export async function ownerSay(tmux: string, text: string) {
+export async function ownerSay(tmux: string, text: string, shell = false) {
   const { sessions } = await view()
   const hit = sessions.find((s) => s.where === 'deck' && s.tmux === tmux)
   if (!hit) throw new Error('That session is not running in Overvibe any more.')
   const refused = notAgent(hit.kind, hit.title)
   if (refused) throw new Error(refused)
   const tool = hit.tool ?? 'claude'
-  const r = await enqueue({ tmux, tool, toName: hit.title, toSession: hit.sessionId, from: 'you', fromSession: null, text, body: text, owner: true })
+  // only Claude Code has a shell mode to type "! <command>" into [T1114-1]
+  if (shell && tool !== 'claude') throw new Error('Only Claude Code sessions run a ! command; run it in a new terminal instead.')
+  const r = await enqueue({ tmux, tool, toName: hit.title, toSession: hit.sessionId, from: 'you', fromSession: null, text, body: text, owner: true, ...(shell ? { shell: true } : {}) })
   return { to: hit.title, tool, ...r }
 }
 

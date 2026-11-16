@@ -26,6 +26,12 @@ export type Session = {
   apiError?: string
   /** Close old sessions calls it done (idle a while, nothing asked, nothing running): why [T1112-4] */
   tidy?: string
+  /** suspended to free memory [T1116-3]: its last screen shows under a Revive overlay */
+  suspended?: number
+  suspendedBy?: 'auto' | 'owner'
+  /** its verdict as it was suspended: done (safe to close), waiting (on you) or unsure, with the reason */
+  suspendedVerdict?: 'done' | 'waiting' | 'unsure'
+  suspendedReason?: string
   /** waiting on the owner with no question on screen: why (a decision left to them...) [T1112-10] */
   owes?: string
   noTranscript?: boolean
@@ -94,9 +100,11 @@ export const deck = reactive({
   setupAway: false,
   // the Agent map became Stats [T1110-84]: an old saved 'map' opens Stats
   view: ((v) => (v === 'map' ? 'stats' : v))(localStorage.getItem('deck.view') as View | 'map' | null) || 'terminal',
-  settings: { defaultAccount: 'auto', projects: {}, permissionMode: 'ask', modeProjects: {}, codex: { defaultAccount: 'auto', projects: {} }, hiddenAccounts: [], pausedAccounts: [], remoteOff: [], chromeAccount: null, chromeProjects: {}, projectOrder: [], projectNames: {}, pins: [] } as { defaultAccount: string; projects: Record<string, string>; permissionMode: PermissionMode; modeProjects: Record<string, PermissionMode>; codex: { defaultAccount: string; projects: Record<string, string> }; hiddenAccounts: string[]; pausedAccounts?: string[]; remoteOff?: string[]; chromeAccount: string | null; chromeProjects: Record<string, boolean>; projectOrder: string[]; projectNames: Record<string, string>; pins: string[]; tasksView?: boolean; sidebarAccounts?: boolean; sidebarOrder?: 'project' | 'newest'; spawnLimits?: { maxDepth: number; maxChildren: number } },
+  settings: { defaultAccount: 'auto', projects: {}, permissionMode: 'ask', modeProjects: {}, codex: { defaultAccount: 'auto', projects: {} }, hiddenAccounts: [], pausedAccounts: [], remoteOff: [], chromeAccount: null, chromeProjects: {}, projectOrder: [], projectNames: {}, pins: [] } as { defaultAccount: string; projects: Record<string, string>; permissionMode: PermissionMode; modeProjects: Record<string, PermissionMode>; codex: { defaultAccount: string; projects: Record<string, string> }; hiddenAccounts: string[]; pausedAccounts?: string[]; remoteOff?: string[]; chromeAccount: string | null; chromeProjects: Record<string, boolean>; projectOrder: string[]; projectNames: Record<string, string>; pins: string[]; tasksView?: boolean; sidebarAccounts?: boolean; sidebarOrder?: 'project' | 'newest'; suspendIdleMin?: number; spawnLimits?: { maxDepth: number; maxChildren: number } },
   /** a local router file (~/.config/overvibe/router.ts) is loaded and may choose accounts for new sessions */
   router: false,
+  /** Telegram requests [T1113-3]: null while no bot is set up, else how many are still open */
+  requests: null as { open: number } | null,
   homeAbs: '',
   moveFor: null as Session | null,
   /** Tasks > Follow up with agent is open (its text must survive a new build's reload) [T1112-14] */
@@ -124,7 +132,7 @@ export type Pending = {
   toolUseId: string; tool: string; at: number; sessionId: string; cwd: string | null; title: string | null; plan?: string
   questions?: { question: string; header?: string; multiSelect?: boolean; options: { label: string; description?: string }[] }[]
 }
-export type View = 'terminal' | 'messages' | 'stats' | 'settings' | 'tasks' | 'tidy'
+export type View = 'terminal' | 'messages' | 'stats' | 'settings' | 'tasks' | 'tidy' | 'requests'
 
 export function setView(v: View) {
   if (v === 'settings' && deck.view !== 'settings') settingsAt.section = '' // opens at the top unless a section is asked for
@@ -135,7 +143,7 @@ export function setView(v: View) {
 
 // The address bar follows what is open: #/s/<session key> for a session, #/<view> for the other
 // views. Back and Forward work, and a copied link opens the same place.
-const VIEWS: View[] = ['terminal', 'messages', 'stats', 'settings', 'tasks', 'tidy']
+const VIEWS: View[] = ['terminal', 'messages', 'stats', 'settings', 'tasks', 'tidy', 'requests']
 /** Settings' section in view (#/settings/<id>), and a counter that asks Settings to show that page [T1112-19, T1112-100] */
 export const settingsAt = reactive({ section: '', jump: 0 })
 /** Open Settings at one of its sections (src/web/settingsNav.ts ids), or at the top. */
@@ -211,7 +219,7 @@ export async function refresh() {
   const stamp = orderStamp
   const pStamp = pinStamp
   try {
-    const s = await api<{ sessions: Session[]; accounts: Account[]; tools?: ToolStatus[]; settings: typeof deck.settings; router?: boolean; homeAbs: string; pending: Pending[]; focus?: Focus | null; build?: string; self?: SelfUpdate | null }>('/api/state')
+    const s = await api<{ sessions: Session[]; accounts: Account[]; tools?: ToolStatus[]; settings: typeof deck.settings; router?: boolean; homeAbs: string; pending: Pending[]; focus?: Focus | null; build?: string; self?: SelfUpdate | null; requests?: { open: number } | null }>('/api/state')
     // a new UI build landed: load it, unless a dialog is open (it would lose what is typed there)
     if (s.build) {
       if (!loadedBuild) loadedBuild = s.build
@@ -223,6 +231,7 @@ export async function refresh() {
     deck.settings = orderSaving || stamp !== orderStamp ? { ...s.settings, projectOrder: deck.settings.projectOrder } : s.settings
     if (pinSaving || pStamp !== pinStamp) deck.settings = { ...deck.settings, pins: pinsShown }
     deck.router = !!s.router
+    deck.requests = s.requests ?? null
     deck.homeAbs = s.homeAbs
     // a deck session is addressed by its tmux name
     for (const x of s.sessions) if (x.where === 'deck' && x.tmux) x.key = x.tmux
@@ -292,7 +301,7 @@ export function select(key: string | null) {
  * (a pinned session appears twice; its first copy counts).
  */
 function neighbourOf(key: string): string | null {
-  const live = (k: string) => deck.sessions.some((x) => x.key === k && x.where !== 'past' && x.status !== 'ended')
+  const live = (k: string) => deck.sessions.some((x) => x.key === k && x.where !== 'past' && (x.status !== 'ended' || !!x.suspended))
   const rows = [...document.querySelectorAll<HTMLElement>('aside [data-key]')].filter((el) => el.getClientRects().length).map((el) => el.dataset.key!)
   const keys = rows.filter((k, i) => rows.indexOf(k) === i)
   const i = keys.indexOf(key)
@@ -360,7 +369,7 @@ export const projectPinned = (project: string) => deck.sessions.filter((s) => pr
 export async function closeProject(project: string, list: Planned<Session>[]): Promise<string[]> {
   const todo = list.filter((x) => x.action !== 'skip')
   const keys = new Set([`group:${project}`, ...todo.map((x) => x.s.key)])
-  const live = (k: string) => deck.sessions.some((x) => x.key === k && x.where !== 'past' && x.status !== 'ended')
+  const live = (k: string) => deck.sessions.some((x) => x.key === k && x.where !== 'past' && (x.status !== 'ended' || !!x.suspended))
   const rows = [...document.querySelectorAll<HTMLElement>('aside [data-key], aside [data-group-head]')].filter((el) => el.getClientRects().length)
   const moving = !!deck.selected && keys.has(deck.selected)
   const next = moving ? nextAfterGroup(rows.map((el) => el.dataset.key ?? `group:${el.dataset.groupHead}`), keys, live) : null
@@ -453,7 +462,7 @@ export const STATUS: Record<Status, { label: string; tone: 'gray' | 'violet' | '
 }
 
 /** a session's status pill: a deploy question gets its own [T1112-134] */
-export const pillOf = (s: { status: Status; deploy?: boolean }) => (s.status === 'waiting' && s.deploy ? { label: 'Deploy?', tone: 'violet' as const, pulse: false } : STATUS[s.status])
+export const pillOf = (s: { status: Status; deploy?: boolean; suspended?: number }) => (s.suspended ? { label: 'Suspended', tone: 'blue' as const, pulse: false } : s.status === 'waiting' && s.deploy ? { label: 'Deploy?', tone: 'violet' as const, pulse: false } : STATUS[s.status])
 
 export const copy = (text: string) => navigator.clipboard.writeText(text)
 
@@ -570,4 +579,16 @@ export function tokenLine(t?: { in: number; out: number }) {
   if (!t || !(t.in || t.out)) return ''
   const n = (x: number) => (x >= 1e6 ? `${(x / 1e6).toFixed(x >= 1e7 ? 0 : 1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : String(x))
   return `${n(t.in)} in / ${n(t.out)} out`
+}
+
+/** Suspend an idle session to free its memory; its last screen stays in its row [T1116-3]. */
+export async function suspendSession(tmux: string) {
+  await api(`/api/sessions/${tmux}/suspend`, {})
+  await refresh()
+}
+/** Bring a suspended session back in the same row: same conversation, account and mode. */
+export async function reviveSession(key: string) {
+  const r = await api<{ tmux: string }>(`/api/sessions/${key}/revive`, {})
+  await refresh()
+  select(r.tmux)
 }

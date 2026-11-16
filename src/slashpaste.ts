@@ -17,3 +17,9 @@ export function splitBracketed(data: string): [string, string] | null {
   const s = splitSlash(data.slice(START.length, -END.length))
   return s ? [s[0], START + s[1] + END] : null
 }
+
+/** ["!", "<command>"] for the owner's "! <command>" [T1114-1]: the "!" is typed alone, the command pasted. */
+export function splitBang(text: string): [string, string] | null {
+  const m = /^!\s*(?=\S)/.exec(text)
+  return m ? ['!', text.slice(m[0].length)] : null
+}

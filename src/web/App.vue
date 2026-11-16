@@ -3,16 +3,18 @@
 // rounded card on the shell colour, and the main column with terminal tabs.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Wordmark from './components/Wordmark.vue'
-import { BrushCleaning, ChartColumn, CircleArrowUp, ListTodo, Megaphone, MessageSquareText, Plus, Sparkles } from 'lucide-vue-next'
+import { BrushCleaning, ChartColumn, CircleArrowUp, Inbox, ListTodo, Megaphone, MessageSquareText, Plus, Sparkles } from 'lucide-vue-next'
 import SessionList from './components/SessionList.vue'
 import AccountsPanel from './components/AccountsPanel.vue'
 import TerminalTabs from './components/TerminalTabs.vue'
 import SessionCard from './components/SessionCard.vue'
+import SuspendedView from './components/SuspendedView.vue'
 import NewSessionModal from './components/NewSessionModal.vue'
 import AddAccountModal from './components/AddAccountModal.vue'
 import MessagesView from './components/MessagesView.vue'
 import TidyView from './components/TidyView.vue'
 import StatsView from './components/StatsView.vue'
+import RequestsView from './components/RequestsView.vue'
 import SettingsView from './components/SettingsView.vue'
 import TasksView from './components/TasksView.vue'
 import MoveFolderModal from './components/MoveFolderModal.vue'
@@ -46,6 +48,8 @@ import { api, applyUrl, openSettings, replaceUrl, versionOf, askStop, closeRow, 
  *  wrapping; closed and past rows are skipped. From a closed row it goes to the nearest running one.
  *  A pinned session shows twice (Pinned and its project): it steps on from the copy you clicked or
  *  last stepped to, so the next row is the one under it on screen [T1111-29]. */
+// the Mac desktop app has no title bar: room for its traffic lights, and drag areas (style.css .desk-mac) [T1116-4]
+if (window.deckDesktop?.platform === 'darwin') document.documentElement.classList.add('desk-mac')
 let at: HTMLElement | null = null
 const rowEl = (t: EventTarget | null) => (t instanceof Element ? t.closest<HTMLElement>('[data-key]') : null)
 const remember = (e: Event) => {
@@ -58,7 +62,7 @@ function step(back: boolean) {
   const els = [...document.querySelectorAll<HTMLElement>('aside [data-key]')].filter((el) => el.getClientRects().length)
   const live = (k: string) => {
     const s = deck.sessions.find((x) => x.key === k)
-    return !!s && s.where !== 'past' && s.status !== 'ended'
+    return !!s && s.where !== 'past' && (s.status !== 'ended' || !!s.suspended)
   }
   const n = els.length
   if (!n) return
@@ -164,8 +168,10 @@ const UPDATE_LABEL = { claude: 'Claude Code', codex: 'Codex', agy: 'agy' } as co
 const updates = computed(() => deck.tools.filter((t) => t.update))
 
 // the footer tabs; Tasks only while Settings > Tasks view is on [T1112-16], with its open count [T1112-14]
-const navTabs = computed((): { id: 'tasks' | 'messages' | 'stats'; label: string; tip: string; icon: unknown }[] => [
+const navTabs = computed((): { id: 'tasks' | 'requests' | 'messages' | 'stats'; label: string; tip: string; icon: unknown }[] => [
   ...(tasksOn.value ? [{ id: 'tasks' as const, label: 'Tasks', tip: 'Tasks from every TASKS.md', icon: ListTodo }] : []),
+  // Telegram requests, researched and planned, while a bot is set up [T1113-3]
+  ...(deck.requests ? [{ id: 'requests' as const, label: 'Requests', tip: 'Customer requests from Telegram, with their research and plan', icon: Inbox }] : []),
   { id: 'messages', label: 'Messages', tip: 'Messages you sent to sessions', icon: MessageSquareText },
   { id: 'stats', label: 'Stats', tip: 'Stats: sessions, working time, waiting, usage', icon: ChartColumn },
 ])
@@ -270,7 +276,7 @@ onUnmounted(() => {
     <div class="relative flex min-h-0 w-full flex-1 overflow-hidden bg-surface">
       <aside class="relative flex shrink-0 flex-col border-r border-line bg-surface" :style="{ width: sideW + 'px' }">
         <div class="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize hover:bg-[var(--color-brand-500)]/25" title="Drag to resize · double-click to reset" @pointerdown="startResize" @dblclick="resetWidth"></div>
-        <div class="flex items-center justify-between px-4 pb-3 pt-4">
+        <div data-sidebar-top class="flex items-center justify-between px-4 pb-3 pt-4">
           <div class="flex items-center gap-2">
             <Wordmark class="h-[22px] w-auto text-ink" />
           </div>
@@ -300,7 +306,7 @@ onUnmounted(() => {
           <span class="min-w-0 truncate">{{ updates.map((t) => `${UPDATE_LABEL[t.tool]} ${t.update!.latest}`).join(', ') }} available</span>
         </button>
         <!-- three short tabs, icon over label, so nothing truncates down to the 200 px minimum width [T1110-84] -->
-        <nav class="grid gap-1 border-t border-line px-2 py-1.5" :class="navTabs.length === 3 ? 'grid-cols-3' : 'grid-cols-2'">
+        <nav class="grid gap-1 border-t border-line px-2 py-1.5" :class="navTabs.length === 4 ? 'grid-cols-4' : navTabs.length === 3 ? 'grid-cols-3' : 'grid-cols-2'">
           <button
             v-for="v in navTabs"
             :key="v.id"
@@ -310,11 +316,15 @@ onUnmounted(() => {
             :aria-current="deck.view === v.id ? 'page' : undefined"
             @click="setView(deck.view === v.id ? 'terminal' : v.id)"
           >
-            <component :is="v.icon" :size="16" :stroke-width="1.7" :class="deck.view === v.id ? 'text-[var(--color-brand-600)]' : 'text-faint'" />
+            <span class="relative">
+              <component :is="v.icon" :size="16" :stroke-width="1.7" :class="deck.view === v.id ? 'text-[var(--color-brand-600)]' : 'text-faint'" />
+              <!-- open Telegram requests: a badge on the icon, so four tabs still fit [T1113-3] -->
+              <span v-if="v.id === 'requests' && deck.requests?.open" class="absolute -right-2.5 -top-1.5 rounded-full px-1 text-[10px] font-semibold leading-[14px]" style="background: var(--color-chip-amber-bg); color: var(--color-chip-amber-fg)" data-requests-open>{{ deck.requests.open }}</span>
+            </span>
             <span class="whitespace-nowrap"
               >{{ v.label
               }}<template v-if="v.id === 'tasks' && taskCounts.open"
-                ><span v-tip="openTip" class="ml-1 text-faint">{{ short(taskCounts.open) }}</span
+                ><span v-if="navTabs.length < 4" v-tip="openTip" class="ml-1 text-faint">{{ short(taskCounts.open) }}</span
                 ><span v-if="taskCounts.waiting" v-tip="waitingTip" class="ml-1 rounded px-1 font-semibold" style="background: var(--color-chip-amber-bg); color: var(--color-chip-amber-fg)">{{ short(taskCounts.waiting) }}</span
                 ><span v-if="tasksSince" v-tip="sinceTip" class="text-faint">*</span></template
               ></span
@@ -328,11 +338,13 @@ onUnmounted(() => {
         <MessagesView v-if="deck.view === 'messages'" />
         <TidyView v-else-if="deck.view === 'tidy'" />
         <StatsView v-else-if="deck.view === 'stats'" />
+        <RequestsView v-else-if="deck.view === 'requests'" />
         <SettingsView v-else-if="deck.view === 'settings'" />
         <TasksView v-else-if="deck.view === 'tasks' && tasksOn" />
         <!-- terminals stay mounted while another view is shown, so their connections survive -->
         <TerminalTabs v-if="deck.tabs.length" v-show="deck.view === 'terminal'" :class="current?.tmux ? 'min-h-0 flex-1' : ''" />
-        <SessionCard v-if="deck.view === 'terminal' && current && !current.tmux" :key="current.key" :s="current" class="min-h-0 flex-1 overflow-y-auto" />
+        <SuspendedView v-if="deck.view === 'terminal' && current && !current.tmux && current.suspended" :key="'sus-' + current.key" :s="current" />
+        <SessionCard v-else-if="deck.view === 'terminal' && current && !current.tmux" :key="current.key" :s="current" class="min-h-0 flex-1 overflow-y-auto" />
         <div v-if="deck.view === 'terminal' && !current" class="grid flex-1 place-items-center p-8">
           <div class="max-w-md text-center">
             <h2 class="text-xl font-bold tracking-[-0.03em]">No session open</h2>

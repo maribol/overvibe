@@ -385,3 +385,23 @@
 }
 .animate-pulse-ring { animation: deck-pulse-ring 1.6s ease-in-out infinite; }
 
+
+/* a task line opened from a link or a tooltip [T1112-144]: lit for a moment so the eye finds it */
+.task-flash {
+  background: var(--color-row-sel);
+  box-shadow: inset 3px 0 0 var(--color-brand-500, var(--color-brand-600));
+}
+
+/* The Mac desktop app without a title bar [T1116-4]: the traffic lights sit at the sidebar's top-left, so its
+   top row gets a strip above it; that row and the session header move the window (double-click zooms), while
+   their buttons, fields and the selectable folder path stay clickable. */
+.desk-mac [data-sidebar-top] {
+  padding-top: 38px;
+  -webkit-app-region: drag;
+}
+.desk-mac [data-term-header] {
+  -webkit-app-region: drag;
+}
+.desk-mac :is([data-sidebar-top], [data-term-header]) :is(button, a, input, select, textarea, label, [role='button'], [data-term-path], [data-more-menu], [data-context-meter], [title]) {
+  -webkit-app-region: no-drag;
+}

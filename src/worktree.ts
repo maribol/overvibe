@@ -3,7 +3,7 @@
 // beside the repo, in <repo>.worktrees/<name> (not inside it, where watchers, builds and searches of the
 // main checkout would pick it up). Overvibe never deletes a worktree or its branch: when the helper
 // stops, its coordinator is told the branch, what is in it and how to merge it, and cleans up itself.
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { basename, dirname, join, relative } from 'node:path'
 import { HOME, tildify } from './env'
 
@@ -53,6 +53,49 @@ export function makeWorktree(cwd: string, name: string | undefined): { cwd: stri
   const sub = relative(top.out, cwd)
   const inside = sub && !sub.startsWith('..') && existsSync(join(path, sub)) ? join(path, sub) : path
   return { cwd: inside, worktree: { path, branch, repo: top.out, base: head.out } }
+}
+
+/**
+ * A new worktree has no node_modules (git does not track them), so a helper's first test run would install
+ * them inside its own sandbox [T1112-141]. The install command for a folder from its lockfile, the same one
+ * the project uses; null when there is no lockfile (Overvibe never guesses a package manager).
+ */
+export function depsCommand(files: string[]): string[] | null {
+  const has = (f: string) => files.includes(f)
+  if (has('bun.lock') || has('bun.lockb')) return [process.execPath.endsWith('bun') ? process.execPath : 'bun', 'install']
+  if (has('pnpm-lock.yaml')) return ['pnpm', 'install', '--frozen-lockfile']
+  if (has('yarn.lock')) return ['yarn', 'install', '--frozen-lockfile']
+  if (has('package-lock.json')) return ['npm', 'ci']
+  return null
+}
+
+/**
+ * Install dependencies in a new worktree where the main checkout has them installed: its top folder and the
+ * subfolder the helper runs in. A real install, never a link to the main checkout's node_modules (removing one
+ * worktree would break the other). Returns one line per folder for whoever started the helper.
+ */
+export async function installDeps(w: Worktree, helperCwd: string, timeoutMs = 180_000): Promise<string[]> {
+  const notes: string[] = []
+  const subs = [...new Set(['', relative(w.path, helperCwd)])].filter((x) => !x.startsWith('..'))
+  for (const sub of subs) {
+    const dir = join(w.path, sub)
+    if (!existsSync(join(dir, 'package.json')) || !existsSync(join(w.repo, sub, 'node_modules'))) continue
+    const cmd = depsCommand(readdirSync(dir))
+    if (!cmd) continue
+    const where = tildify(dir)
+    try {
+      const p = Bun.spawn(cmd, { cwd: dir, stdout: 'ignore', stderr: 'pipe', env: { ...process.env, CI: '1' } })
+      const timer = setTimeout(() => p.kill(), timeoutMs)
+      const code = await p.exited
+      clearTimeout(timer)
+      const err = (await new Response(p.stderr).text()).trim().split('\n').slice(-1)[0] ?? ''
+      const label = [cmd[0]!.split('/').pop(), ...cmd.slice(1)].join(' ')
+      notes.push(code === 0 ? `installed dependencies in ${where} (${label})` : `could not install dependencies in ${where} (${label} exited ${code}${err ? ': ' + err.replaceAll(HOME + '/', '~/') : ''}); the helper has to install them itself`)
+    } catch (e: any) {
+      notes.push(`could not install dependencies in ${where}: ${e?.message ?? e}; the helper has to install them itself`)
+    }
+  }
+  return notes
 }
 
 /**

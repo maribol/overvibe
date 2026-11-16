@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs'
 import { DATA_DIR, TMUX_BIN, TMUX_SOCKET, cleanEnv, isTmuxShim } from './env'
 import { clipboardShell } from './platform'
 import { installShim, pathWithShim } from './tmuxshim'
-import { splitSlash } from './slashpaste'
+import { splitBang, splitSlash } from './slashpaste'
 
 const CONF = join(DATA_DIR, 'tmux.conf')
 const COPY = clipboardShell()
@@ -155,9 +155,11 @@ export async function countSize(pid: number) {
  * Codex reads a fast burst of text as a paste and swallows an Enter that follows at once, so wait
  * a moment before Enter, then check the text left the input box and press once more if it did not.
  */
-export async function typeInto(name: string, text: string) {
-  // "/compact <long note>" pasted whole never runs: type the command name, paste the rest [T1112-132]
-  const slash = splitSlash(text)
+export async function typeInto(name: string, text: string, shell = false) {
+  // "/compact <long note>" pasted whole never runs: type the command name, paste the rest [T1112-132].
+  // The owner's "! <command>" the same way: a typed "!" opens Claude Code's shell mode, a pasted one would not
+  // [T1114-1]. Only when asked: a peer's or a prompt's text starting with "!" is never run as a command.
+  const slash = shell ? splitBang(text) : splitSlash(text)
   if (slash) {
     await typeLiteral(name, slash[0])
     await Bun.sleep(150)

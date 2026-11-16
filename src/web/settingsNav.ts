@@ -39,6 +39,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'order', label: 'Project order' },
     ],
   },
+  { label: 'Integrations', items: [{ id: 'telegram', label: 'Telegram', aka: ['Telegram bot', 'Customer groups'] }] },
   { label: 'Privacy', items: [{ id: 'usage', label: 'Usage ping' }] },
 ]
 

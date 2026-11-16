@@ -3,11 +3,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal, type IBufferCell } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { BrushCleaning, Check, ChevronDown, Copy, Ellipsis, FolderInput, Square, UserRound, Zap, ZapOff } from 'lucide-vue-next'
+import { BrushCleaning, Check, CirclePause, ChevronDown, Copy, Ellipsis, FolderInput, Square, UserRound, Zap, ZapOff } from 'lucide-vue-next'
 import StatusPill from './StatusPill.vue'
 import QueueChip from './QueueChip.vue'
 import PromptBar from './PromptBar.vue'
 import CompactModal from './CompactModal.vue'
+import RunModal from './RunModal.vue'
 import ContextMeter from './ContextMeter.vue'
 import { type Row } from '../compactLink'
 import { compileUser, linksAt, pathsOn, type Link, type LinkCtx, type Target, type UserMatcher } from '../links'
@@ -15,7 +16,7 @@ import type { UserLink } from '../../linkuser'
 import { tasksFocus, tasksOn } from '../tasks'
 import { midPath } from '../midPath'
 import { alt } from '../keys'
-import { ago, api, closeRow, setView, stopSession, STATUS, pillOf, accountsFor, askStop, copy, deck, draggedSession, switchSessionAccount, type Session } from '../deck'
+import { ago, api, closeRow, suspendSession, setView, stopSession, STATUS, pillOf, accountsFor, askStop, copy, deck, draggedSession, switchSessionAccount, type Session } from '../deck'
 import { SESSION_MIME, sessionRef } from '../../sessionref'
 import { splitBracketed } from '../../slashpaste'
 
@@ -247,6 +248,12 @@ function screenRow(y: number): Row | undefined {
   }
   return { text, wrapped: l.isWrapped, fg, xs }
 }
+// a `! <command>` the agent asked the owner to run, ⌘-clicked: the command, for the confirm dialog [T1114-1]
+const runAsk = ref<string | null>(null)
+function closeRun() {
+  runAsk.value = null
+  nextTick(() => term.focus())
+}
 function closeCompact() {
   compactAsk.value = null
   nextTick(() => term.focus())
@@ -268,7 +275,7 @@ async function loadLinks() {
     userMatchers = compileUser(r.user, (w) => console.warn(w))
   } catch {}
 }
-const linkCtx = (): LinkCtx => ({ compact: compacts.value, git: linkInfo.value.git, github: linkInfo.value.github, tasks: tasksOn.value, user: userMatchers })
+const linkCtx = (): LinkCtx => ({ run: !!props.s.tmux && props.s.where === 'deck', compact: compacts.value, git: linkInfo.value.git, github: linkInfo.value.github, tasks: tasksOn.value, user: userMatchers })
 // a hex word is only a commit link once the folder's repo says it has that commit
 const commitOk = new Map<string, boolean>()
 async function verified(links: Link[]): Promise<Link[]> {
@@ -289,8 +296,9 @@ function go(t: Target) {
   else if (t.kind === 'task') ((tasksFocus.value = { id: t.id, cwd: linkCwd.value }), setView('tasks'))
   else if (t.kind === 'copy') toClipboard(t.text)
   else if (t.kind === 'compact') compactAsk.value = t.args
+  else if (t.kind === 'run') runAsk.value = t.cmd
 }
-const copyOf = (t: Target) => (t.kind === 'url' ? t.url : t.kind === 'task' ? t.id : t.kind === 'copy' ? t.text : t.kind === 'path' ? t.path : `/compact ${t.args}`)
+const copyOf = (t: Target) => (t.kind === 'url' ? t.url : t.kind === 'task' ? t.id : t.kind === 'copy' ? t.text : t.kind === 'path' ? t.path : t.kind === 'run' ? t.cmd : `/compact ${t.args}`)
 
 // Hover a file link for 400 ms: a popover under it with a look inside (image, first lines, folder entries)
 // and the link's actions [T1112-114]. The server finds the file as ⌘-click does, with the same cache. It
@@ -380,7 +388,7 @@ function cardSoon(link: Link) {
   }, 400)
 }
 const whereOf = (t: Target) =>
-  t.kind === 'url' ? t.url : t.kind === 'task' ? `Tasks view, the ${t.id} line` : t.kind === 'copy' ? `Copies ${t.text}` : t.kind === 'path' ? t.path : '/compact'
+  t.kind === 'url' ? t.url : t.kind === 'task' ? `Tasks view, the ${t.id} line` : t.kind === 'copy' ? `Copies ${t.text}` : t.kind === 'path' ? t.path : t.kind === 'run' ? `! ${t.cmd}` : '/compact'
 const keepPeek = () => clearTimeout(peekShut)
 /** the pointer left the link or the popover: close unless it reaches the other one soon */
 function peekLeave() {
@@ -458,7 +466,7 @@ onMounted(() => {
     leave: () => (leave(), linkLeave()),
   }
   // every other link on screen: one ordered matcher list (src/web/links.ts) [T1112-137]
-  const screen = { row: screenRow }
+  const screen = { row: screenRow, get cols() { return term.cols } }
   term.registerLinkProvider({
     provideLinks(y, cb) {
       const found = linksAt(screen, y - 1, linkCtx())
@@ -477,7 +485,7 @@ onMounted(() => {
             else go(t)
           },
           hover: () => {
-            if (t.kind === 'compact') return void (hovered = null)
+            if (t.kind === 'compact' || t.kind === 'run') return void (hovered = null)
             if (t.kind === 'path') return void ((hovered = { kind: 'path', text: t.path, y0: start.y, x0: start.x }), peekSoon(t.path, () => contextFor(start.y, start.x), start.y, start.x))
             hovered = { kind: 'link', text: l.text, y0: start.y, x0: start.x, link: l }
             cardSoon(l)
@@ -619,6 +627,18 @@ const isAgent = computed(() => props.s.kind === 'claude' && props.s.where === 'd
 const sessionRefusal = computed(() =>
   !isAgent.value ? "Only an agent's terminal takes a session" : draggedSession.value && draggedSession.value === props.s.tmux ? 'Drop it on another session' : '')
 const draggedTitle = computed(() => deck.sessions.find((x) => x.tmux === draggedSession.value)?.title ?? 'the session')
+// enter/leave counting can miss a leave (xterm swaps its rows mid-drag, a drag ends outside the window, a
+// cancelled drag from the screenshot thumbnail), which left the overlay up for good. The browser fires dragover
+// every few hundred ms while a drag is over us, even when the pointer is still, so a quiet second means it's gone.
+let dragWatch: ReturnType<typeof setTimeout> | undefined
+function endDrag() {
+  clearTimeout(dragWatch)
+  dragDepth = 0
+  dragging.value = false
+  draggingSession.value = false
+}
+const armDragWatch = () => (clearTimeout(dragWatch), (dragWatch = setTimeout(endDrag, 1000)))
+onBeforeUnmount(() => clearTimeout(dragWatch))
 function onDragEnter(e: DragEvent) {
   const session = hasSession(e)
   if (!hasFiles(e) && !session) return
@@ -626,8 +646,10 @@ function onDragEnter(e: DragEvent) {
   dragDepth++
   dragging.value = true
   draggingSession.value = session
+  armDragWatch()
 }
 function onDragOver(e: DragEvent) {
+  if (dragging.value) armDragWatch()
   if (hasSession(e)) {
     e.preventDefault()
     e.dataTransfer!.dropEffect = sessionRefusal.value ? 'none' : 'copy'
@@ -639,15 +661,16 @@ function onDragOver(e: DragEvent) {
 }
 function onDragLeave(e: DragEvent) {
   if (!hasFiles(e) && !hasSession(e)) return
-  if (--dragDepth <= 0) (dragDepth = 0), (dragging.value = false)
+  // left the drop zone for real (not just moved onto a child of it)
+  const zone = e.currentTarget as HTMLElement | null
+  const to = e.relatedTarget as Node | null
+  if (--dragDepth <= 0 || (to && !zone?.contains(to))) endDrag()
 }
 // a refused drop fires no drop event here; the row's dragend clears the highlight
-watch(draggedSession, (v) => !v && draggingSession.value && ((dragDepth = 0), (dragging.value = false), (draggingSession.value = false)))
+watch(draggedSession, (v) => !v && draggingSession.value && endDrag())
 function onSessionDrop(e: DragEvent) {
   e.preventDefault()
-  dragDepth = 0
-  dragging.value = false
-  draggingSession.value = false
+  endDrag()
   const key = e.dataTransfer?.getData(SESSION_MIME)
   const src = key ? deck.sessions.find((x) => x.tmux === key) : undefined
   if (!src || key === props.s.tmux || !isAgent.value) return
@@ -670,8 +693,7 @@ async function onDrop(e: DragEvent) {
   if (hasSession(e)) return onSessionDrop(e)
   if (!hasFiles(e)) return
   e.preventDefault()
-  dragDepth = 0
-  dragging.value = false
+  endDrag()
   const files = [...(e.dataTransfer?.files ?? [])]
   if (!files.length) return
   dropErr.value = ''
@@ -693,6 +715,16 @@ async function onDrop(e: DragEvent) {
   }
 }
 
+// Suspend [T1116-3]: an idle Claude or Codex session Overvibe started (the server checks the rest)
+const canSuspend = computed(() => props.s.where === 'deck' && props.s.kind === 'claude' && !props.s.hand && ['claude', 'codex'].includes(props.s.tool ?? 'claude') && !!props.s.sessionId && props.s.status === 'idle')
+async function suspendIt() {
+  moreOpen.value = false
+  try {
+    await suspendSession(props.s.tmux!)
+  } catch (e: any) {
+    alert(e.message)
+  }
+}
 const resumeCmd = () => `cd ${props.s.cwd} && claude --resume ${props.s.sessionId}`
 const switchErr = ref('')
 async function switchTo(to: string) {
@@ -830,6 +862,7 @@ const autoTitle = computed(() =>
         <div v-if="moreOpen" class="absolute right-0 top-full z-30 mt-1.5 min-w-[220px] rounded-lg border border-line bg-surface py-1 text-[12.5px] text-ink shadow-lg">
           <button v-if="canMove" class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-canvas-2" @click="(moreOpen = false), (deck.moveFor = s)"><FolderInput :size="13" /> Move to another folder…</button>
           <button v-if="s.sessionId" class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-canvas-2" @click="(moreOpen = false), copy(resumeCmd())"><Copy :size="13" /> Copy resume command</button>
+          <button v-if="canSuspend" class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-canvas-2" data-suspend title="Stops it to free its memory; its last screen stays here and Revive resumes the same conversation" @click="suspendIt"><CirclePause :size="13" /> Suspend to free memory</button>
         </div>
       </div>
       <button class="btn btn-ghost btn-sm flex-none !px-2 hover:!border-[var(--color-danger)] hover:!text-[var(--color-danger)]" data-stop :title="stopTitle" aria-label="Stop" @click="stop"><Square :size="13" /></button>
@@ -845,6 +878,7 @@ const autoTitle = computed(() =>
       <div ref="el" class="h-full w-full" @contextmenu.prevent="term.hasSelection() && toClipboard(term.getSelection())"></div>
       <PromptBar :title="s.title" :active="active" />
       <CompactModal v-if="compactAsk !== null" :s="s" :args="compactAsk" @close="closeCompact" />
+      <RunModal v-if="runAsk !== null" :s="s" :cmd="runAsk" @close="closeRun" />
       <div v-if="menu" data-link-menu class="absolute z-30 min-w-[160px] rounded-lg border border-line bg-surface py-1 text-[12.5px] text-ink shadow-lg" :style="{ left: menu.left + 'px', top: menu.top + 'px' }" @contextmenu.prevent>
         <template v-if="menu.kind === 'path'">
           <button class="block w-full px-3 py-1.5 text-left hover:bg-canvas-2" @click="menuOpen('open')">{{ menu.text.endsWith('/') || menu.folder ? (IS_MAC ? 'Open in Finder' : 'Open folder') : IS_MAC ? 'Open in Chrome' : 'Open' }}</button>

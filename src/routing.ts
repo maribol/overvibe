@@ -36,7 +36,7 @@ export const SPAWN_DEFAULTS: SpawnLimits = { maxDepth: 3, maxChildren: 8 }
 // already had a settings file or sessions before the setting existed (firstMode), stored so it never flips by itself.
 export type Mode = 'auto' | 'ask'
 export const isMode = (m: unknown): m is Mode => m === 'auto' || m === 'ask'
-export type Settings = Rules & { permissionMode: Mode; modeProjects: Record<string, Mode>; spawnLimits: SpawnLimits; codex: Rules; hiddenAccounts: string[]; pausedAccounts: string[]; remoteOff: string[]; chromeAccount: string | null; chromeProjects: Record<string, boolean>; projectOrder: string[]; projectNames: Record<string, string>; pins: string[]; tasksView?: boolean; sidebarAccounts?: boolean; sidebarOrder?: 'project' | 'newest' }
+export type Settings = Rules & { permissionMode: Mode; modeProjects: Record<string, Mode>; spawnLimits: SpawnLimits; codex: Rules; hiddenAccounts: string[]; pausedAccounts: string[]; remoteOff: string[]; chromeAccount: string | null; chromeProjects: Record<string, boolean>; projectOrder: string[]; projectNames: Record<string, string>; pins: string[]; tasksView?: boolean; sidebarAccounts?: boolean; sidebarOrder?: 'project' | 'newest'; /** minutes idle before an agent is suspended, 0 = never [T1116-3] */ suspendIdleMin?: number }
 let settings: Settings = { defaultAccount: 'auto', projects: {}, permissionMode: 'auto', modeProjects: {}, spawnLimits: { ...SPAWN_DEFAULTS }, codex: { defaultAccount: 'auto', projects: {} }, hiddenAccounts: [], pausedAccounts: [], remoteOff: [], chromeAccount: null, chromeProjects: {}, projectOrder: [], projectNames: {}, pins: [] }
 const hadFile = existsSync(FILE)
 let savedMode: unknown

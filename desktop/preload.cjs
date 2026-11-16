@@ -8,4 +8,6 @@ contextBridge.exposeInMainWorld('deckDesktop', {
   },
   start: () => ipcRenderer.invoke('deck:start'),
   retry: () => ipcRenderer.invoke('deck:retry'),
+  /** 'darwin' on a Mac: the page leaves room for the traffic lights and marks where the window drags */
+  platform: process.platform,
 })

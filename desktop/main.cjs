@@ -199,6 +199,9 @@ function createWindow() {
     minWidth: 720,
     minHeight: 480,
     title: 'Overvibe',
+    // the Mac's title bar goes: the traffic lights sit inside the page's top-left, over the sidebar, and the page
+    // marks its own drag areas (src/web/style.css .desk-mac) [T1116-4]
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 13 } } : {}),
     backgroundColor: '#191920',
     show: false,
     webPreferences: {
