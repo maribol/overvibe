@@ -62,7 +62,7 @@ export type DeckRecord = {
   /** conversations this row was in before (a hand-started Claude's /clear starts a new one), newest last, for its task tags [T1112-116] */
   pastIds?: string[]
   /** stopped while idle to free memory [T1116-3]: its last screen is in <data dir>/screens/<tmux>.ans; Revive resumes it in this row */
-  suspended?: { at: number; by: 'auto' | 'owner'; /** what Close old sessions said of it as it stopped: its row and Revive card show it */ verdict?: 'done' | 'waiting' | 'unsure'; reason?: string; deploy?: boolean }
+  suspended?: { at: number; by: 'auto' | 'owner' | 'agent'; /** what Close old sessions said of it as it stopped: its row and Revive card show it */ verdict?: 'done' | 'waiting' | 'unsure'; reason?: string; deploy?: boolean }
 }
 export type Hand = { tool: Tool; pid: number; startedAt: number; cwd: string; shellName: string; argsId?: string; resumed?: boolean }
 
@@ -555,14 +555,14 @@ async function holdsOf(row: ViewSession, now = Date.now()): Promise<{ jobs: numb
   return { jobs, timer }
 }
 
-export async function suspendSession(tmux: string, by: 'auto' | 'owner', all?: ViewSession[]) {
+export async function suspendSession(tmux: string, by: 'auto' | 'owner' | 'agent', all?: ViewSession[]) {
   const r = getRecord(tmux)
   if (!r) throw new Error('unknown session')
   all ??= (await view()).sessions
   const row = all.find((x) => x.key === tmux)
   if (!row) throw new Error('unknown session')
   // the owner may suspend one that is idle at once; the timer also waits its minutes
-  const why = keepRunning(row, { now: Date.now(), afterMs: by === 'owner' ? 0 : suspendMinutes(getSettings().suspendIdleMin) * 60_000, queued: queued(tmux).length, ...(await holdsOf(row)) })
+  const why = keepRunning(row, { now: Date.now(), afterMs: by !== 'auto' ? 0 : suspendMinutes(getSettings().suspendIdleMin) * 60_000, queued: queued(tmux).length, ...(await holdsOf(row)) })
   if (why) throw new Error(`"${row.title}" stays running: ${why}.`)
   const screen = await captureStyled(tmux)
   mkdirSync(SCREENS, { recursive: true })
@@ -578,8 +578,11 @@ export async function suspendSession(tmux: string, by: 'auto' | 'owner', all?: V
   return { ok: true }
 }
 const reviving = new Map<string, Promise<DeckRecord>>()
-/** Resume a suspended session in its own row: same tmux name, conversation, account, mode and links. */
-export function reviveSession(tmux: string): Promise<DeckRecord> {
+/**
+ * Resume a suspended session in its own row: same tmux name, conversation, account, mode and links.
+ * `overvibe resume` of a suspended one comes here too, with its account, prompt, mode and links if it gave any [T1116-11].
+ */
+export function reviveSession(tmux: string, o: { account?: string; prompt?: string; mode?: Mode; links?: Links } = {}): Promise<DeckRecord> {
   const going = reviving.get(tmux)
   if (going) return going
   const p = (async () => {
@@ -590,8 +593,8 @@ export function reviveSession(tmux: string): Promise<DeckRecord> {
       save()
       return r
     }
-    const keep = { parent: r.parent, parentId: r.parentId, attached: r.attached, named: r.named, autoNamed: r.autoNamed, pastIds: r.pastIds }
-    const next = await startSession({ tool: r.tool ?? 'claude', cwd: r.cwd, account: r.account, name: r.name, resume: r.sessionId, tmux, worktree: r.worktree, mode: r.mode ?? 'auto' })
+    const keep = { parent: r.parent, parentId: r.parentId, attached: r.attached, ...(o.links?.parent || o.links?.parentId ? o.links : {}), named: r.named, autoNamed: r.autoNamed, pastIds: r.pastIds }
+    const next = await startSession({ tool: r.tool ?? 'claude', cwd: r.cwd, account: o.account || r.account, name: r.name, prompt: o.prompt, resume: r.sessionId, tmux, worktree: r.worktree, mode: o.mode ?? r.mode ?? 'auto' })
     for (const [k, v] of Object.entries(keep)) if (v !== undefined) (next as any)[k] = v
     save()
     console.log(`[suspend] revived "${r.name}" (${tmux})`)
@@ -639,6 +642,90 @@ export async function autoSuspend(now = Date.now()) {
     if (keepRunning(row, { ...base, ...(await holdsOf(row, now)) })) continue
     await suspendSession(row.tmux, 'auto', sessions).catch((e) => console.log(`[suspend] ${e?.message ?? e}`))
   }
+}
+
+/** overvibe suspend / revive [T1116-13]: a deck session by tmux id, conversation id, exact name, else one partial match. */
+async function deckRowFor(want0: string) {
+  const want = want0.trim()
+  if (!want) throw new Error('say which session')
+  const all = (await view()).sessions
+  const rows = all.filter((s) => s.where === 'deck' && (s.tmux || s.suspended))
+  const exact = rows.filter((s) => s.key === want || (s.sessionId && s.sessionId === want))
+  const named = rows.filter((s) => s.title.toLowerCase() === want.toLowerCase())
+  const part = rows.filter((s) => s.title.toLowerCase().includes(want.toLowerCase()))
+  const hits = exact.length ? exact : named.length ? named : part
+  if (hits.length > 1) throw new Error(`"${want}" matches ${hits.length} sessions (${hits.slice(0, 4).map((x) => `"${x.title}"`).join(', ')}); use the exact name or its tmux id from overvibe ls --json`)
+  if (!hits[0]) throw new Error(`no Overvibe session called "${want}" (overvibe ls)`)
+  return { row: hits[0], all }
+}
+/** Suspend from the CLI: the owner (a plain shell) any session; a session itself or the ones it started, like stop. */
+export async function suspendFor(o: { session: string; from: string }) {
+  const caller = o.from ? getRecord(o.from) : undefined
+  if (o.from && !caller) throw new Error(`the calling session (${o.from}) is not an Overvibe session`)
+  const { row, all } = await deckRowFor(o.session)
+  if (row.suspended) return { name: row.title, already: true }
+  const r = getRecord(row.key)!
+  if (!mayStop(r, caller)) throw new Error(`"${row.title}" was not started by this session, so it can't suspend it. Only the owner can (the Overvibe page, or overvibe suspend from a plain shell).`)
+  if (r === caller) throw new Error('a session cannot suspend itself while its turn runs; end your turn and the idle timer does it')
+  await suspendSession(row.key, caller ? 'agent' : 'owner', all)
+  return { name: row.title }
+}
+/**
+ * overvibe attach "<name>" --to "<parent>" / overvibe detach "<name>" [T1116-14]: from a plain shell (the owner) any
+ * session; from inside a session only within its own tree (itself and the sessions it started), because a
+ * parent may stop its children and an agent must not gain that over sessions it did not start.
+ */
+export async function parentFor(o: { session: string; to: string | null; from: string }) {
+  const caller = o.from ? getRecord(o.from) : undefined
+  if (o.from && !caller) throw new Error(`the calling session (${o.from}) is not an Overvibe session`)
+  const { row } = await deckRowFor(o.session)
+  const r = getRecord(row.key)!
+  if (!mayStop(r, caller)) throw new Error(`"${row.title}" was not started by this session, so it can't ${o.to ? 'attach' : 'detach'} it. Only the owner can (the Overvibe page, or the command from a plain shell).`)
+  if (!o.to) {
+    setParent(r.tmux, null, { keepStarter: !!caller && r !== caller })
+    return { name: row.title, parent: null }
+  }
+  const { row: prow } = await deckRowFor(o.to)
+  const p = getRecord(prow.key)!
+  if (caller && !mayStop(p, caller)) throw new Error(`"${prow.title}" is outside this session's own sessions; only the owner can attach to it.`)
+  setParent(r.tmux, p.tmux)
+  return { name: row.title, parent: prow.title }
+}
+/** Revive from the CLI: anyone may, as a message to it would. */
+export async function reviveFor(o: { session: string; prompt?: string }) {
+  const { row } = await deckRowFor(o.session)
+  if (!row.suspended) return { name: row.title, already: true }
+  await reviveSession(row.key, { prompt: o.prompt })
+  return { name: row.title }
+}
+
+/**
+ * Attach a running session to another one, or detach it, without stopping either [T1116-12]. Attached: nested under
+ * the parent in the sidebar, the parent gets Overvibe's notes about it and may stop it. Detached: none of that.
+ */
+export function setParent(tmux: string, parentKey: string | null, o: { keepStarter?: boolean } = {}) {
+  const r = getRecord(tmux)
+  if (!r || r.kind !== 'claude') throw new Error('only agent sessions can be attached')
+  if (!parentKey) {
+    // an agent detaching its own helper only un-nests it: it stays the starter (notes, stop, attach again)
+    if (!o.keepStarter) r.parent = r.parentId = undefined
+    r.attached = undefined
+    save()
+    return r
+  }
+  const p = getRecord(parentKey)
+  if (!p || p.kind !== 'claude') throw new Error('attach it to an agent session')
+  if (p === r) throw new Error('a session cannot be attached to itself')
+  // no loops: the new parent may not sit under this session
+  for (let x: DeckRecord | undefined = p, n = 0; x && n < 20; x = x.parent ? getRecord(x.parent) : undefined, n++) {
+    if (x === r) throw new Error(`"${p.name}" is attached under "${r.name}"; detach it first`)
+  }
+  r.parent = p.tmux
+  r.parentId = p.sessionId || undefined
+  r.attached = true
+  watched.delete(r.tmux) // the watcher takes its state as the new baseline
+  save()
+  return r
 }
 
 /** The page's Stop: same worktree notice to the coordinator as overvibe stop [T1110-79]. */
@@ -779,9 +866,11 @@ attached?: boolean
   tokens?: Tokens
   /** view({ all: true }) only: an attached child its parent closed, or a row the owner hid */
   closed?: boolean
+  /** its last reply was its account's usage limit (the message, with when it resets) [T1116-8] */
+  limit?: string
   /** suspended to free memory (when, and whether the owner or the idle timer did it) [T1116-3] */
   suspended?: number
-  suspendedBy?: 'auto' | 'owner'
+  suspendedBy?: 'auto' | 'owner' | 'agent'
   /** its verdict as it was suspended: done (safe to close), waiting (on you) or unsure, with the reason */
   suspendedVerdict?: 'done' | 'waiting' | 'unsure'
   suspendedReason?: string
@@ -1000,6 +1089,8 @@ export async function view(o: { all?: boolean } = {}) {
       last, waitingReason: prompt ? 'a choice on its screen' : status === 'waiting' && q ? 'last reply ends with a question' : null,
       bg: pane ? hasBg(l) : undefined, prompt, question: prompt?.title ?? (status === 'waiting' ? q : null),
       ...(pane && claude && r.kind === 'claude' && r.sessionId && !isBusy(l) && !prompt && apiErrorOf(r.sessionId) ? { apiError: apiErrorOf(r.sessionId)!.text } : {}),
+      // its subscription's usage limit ("You've hit your weekly limit · resets ..."): the page offers another account [T1116-8]
+      ...(pane && claude && r.kind === 'claude' && !r.hand && r.sessionId && !isBusy(l) && apiErrorOf(r.sessionId)?.code === 'rate_limit' ? { limit: apiErrorOf(r.sessionId)!.text } : {}),
       ...((r.kind === 'shell' || r.hand) && pane?.path && pane.path !== r.cwd ? { here: tildify(pane.path), hereProject: projectFor(pane.path) } : {}),
       ...(!pane && r.closedAt ? { closed: true } : {}),
       ...(!pane && r.suspended ? { suspended: r.suspended.at, suspendedBy: r.suspended.by, suspendedVerdict: r.suspended.verdict, suspendedReason: r.suspended.reason, ...(r.suspended.verdict === 'done' ? { tidy: r.suspended.reason } : r.suspended.verdict === 'waiting' ? { owes: r.suspended.reason } : {}), ...(r.suspended.deploy ? { deploy: true } : {}) } : {}),
@@ -1393,6 +1484,8 @@ export async function resumeSession(o: { row: ViewSession; rec?: DeckRecord; acc
   // its old tmux name (the sidebar row's key) when that terminal is gone, so it comes back in the same row
   const free = rec && !(await listSessions()).some((p) => p.name === rec.tmux)
   const same = !o.fork && rec && free ? { tmux: rec.tmux } : {}
+  // suspended: revive it, so its row keeps its parent, name and the rest [T1116-11]
+  if (!o.fork && rec?.suspended && free) return reviveSession(rec.tmux, { account: o.account, prompt: o.prompt, mode: o.mode, links: o.links })
   return startSession({ tool: row.tool ?? 'claude', cwd: untildify(row.cwd), account: o.account, name: row.title, prompt: o.prompt, resume: id, fork: !!o.fork, ...same, ...(o.links ?? {}), worktree: !o.fork ? rec?.worktree : undefined, mode: o.mode })
 }
 

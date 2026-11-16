@@ -2,7 +2,7 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('deckDesktop', {
-  /** cb(cmd): 'new' | 'stop' | 'shell' | 'palette' | 'next' | 'prev' | 'tab:1'..'tab:9' */
+  /** cb(cmd): 'new' | 'stop' | 'shell' | 'rename' | 'palette' | 'next' | 'prev' | 'tab:1'..'tab:9' */
   on(cb) {
     ipcRenderer.on('deck', (_e, cmd) => cb(String(cmd)))
   },

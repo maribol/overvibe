@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Right-click on a session row: the actions from its card, without opening it first.
 import { computed, onMounted, onUnmounted } from 'vue'
-import { api, copy, deck, isPinned, refresh, select, setPinned, startSession, askStop, type Session } from '../deck'
+import { api, copy, deck, isPinned, refresh, select, setParent, setPinned, startSession, askStop, type Session } from '../deck'
 
 const m = deck.menu!
 const s: Session = m.s
@@ -16,6 +16,12 @@ const items = computed<Item[]>(() => {
     if (s.where === 'terminal') out.push({ label: 'Move here', run: () => select(s.key) })
     out.push({ label: live ? 'Copy here' : s.where === 'deck' && s.tmux ? 'Copy into a new session' : 'Resume here', run: () => startSession({ tool: s.tool ?? 'claude', cwd: s.cwd, account: 'auto', name: s.title, resume: s.sessionId!, fork: live || !!s.tmux }) })
     if (s.where !== 'background') out.push({ label: 'Move to another folder…', run: () => (deck.moveFor = s) })
+  }
+  // attach under another session, or detach, while it runs [T1116-12]
+  if (s.where === 'deck' && s.kind === 'claude') {
+    const parent = s.attached && s.parent ? deck.sessions.find((x) => x.key === s.parent) : undefined
+    if (parent) out.push({ label: `Detach from ${parent.title.length > 28 ? parent.title.slice(0, 27) + '…' : parent.title}`, run: () => setParent(s.key, null) })
+    out.push({ label: parent ? 'Attach to another session…' : 'Attach to a session…', run: () => (deck.attachFor = s) })
   }
   out.push('sep')
   if (s.sessionId) out.push({ label: 'Copy resume command', run: () => copy(`cd ${s.cwd} && claude --resume ${s.sessionId}`) })

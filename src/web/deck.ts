@@ -26,9 +26,11 @@ export type Session = {
   apiError?: string
   /** Close old sessions calls it done (idle a while, nothing asked, nothing running): why [T1112-4] */
   tidy?: string
+  /** its account's usage limit message, while that is its last reply [T1116-8] */
+  limit?: string
   /** suspended to free memory [T1116-3]: its last screen shows under a Revive overlay */
   suspended?: number
-  suspendedBy?: 'auto' | 'owner'
+  suspendedBy?: 'auto' | 'owner' | 'agent'
   /** its verdict as it was suspended: done (safe to close), waiting (on you) or unsure, with the reason */
   suspendedVerdict?: 'done' | 'waiting' | 'unsure'
   suspendedReason?: string
@@ -107,6 +109,8 @@ export const deck = reactive({
   requests: null as { open: number } | null,
   homeAbs: '',
   moveFor: null as Session | null,
+  /** Attach to… picker for this session [T1116-12] */
+  attachFor: null as Session | null,
   /** Tasks > Follow up with agent is open (its text must survive a new build's reload) [T1112-14] */
   followupOpen: false,
   /** the "Compact <session>?" dialog from a ⌘-clicked /compact suggestion is open [T1112-91] */
@@ -223,7 +227,7 @@ export async function refresh() {
     // a new UI build landed: load it, unless a dialog is open (it would lose what is typed there)
     if (s.build) {
       if (!loadedBuild) loadedBuild = s.build
-      else if (s.build !== loadedBuild && !deck.newOpen && !deck.paletteOpen && !deck.renameFor && !deck.moveFor && !deck.menu && !deck.addAccountOpen && !deck.stopFor && !deck.setupOpen && !deck.followupOpen && !deck.compactOpen && !deck.feedbackOpen && !deck.projectMenu && !deck.closeAllFor) location.reload()
+      else if (s.build !== loadedBuild && !deck.newOpen && !deck.paletteOpen && !deck.renameFor && !deck.moveFor && !deck.attachFor && !deck.menu && !deck.addAccountOpen && !deck.stopFor && !deck.setupOpen && !deck.followupOpen && !deck.compactOpen && !deck.feedbackOpen && !deck.projectMenu && !deck.closeAllFor) location.reload()
     }
     // only questions from sessions that are still running
     const running = new Set(s.sessions.filter((x) => x.where !== 'past' && x.status !== 'ended').map((x) => x.sessionId))
@@ -256,7 +260,7 @@ export async function refresh() {
 type Focus = { key: string; title: string; from: string; at: number }
 let focusSeen: number | null = null
 let toastTimer: ReturnType<typeof setTimeout> | undefined
-export const dialogOpen = () => !!(deck.newOpen || deck.paletteOpen || deck.renameFor || deck.moveFor || deck.menu || deck.addAccountOpen || deck.stopFor || deck.setupOpen || deck.followupOpen || deck.compactOpen || deck.feedbackOpen || deck.projectMenu || deck.closeAllFor)
+export const dialogOpen = () => !!(deck.newOpen || deck.paletteOpen || deck.renameFor || deck.moveFor || deck.attachFor || deck.menu || deck.addAccountOpen || deck.stopFor || deck.setupOpen || deck.followupOpen || deck.compactOpen || deck.feedbackOpen || deck.projectMenu || deck.closeAllFor)
 // never switch while the owner is typing: the rest of what they type would land in the other session
 let lastKeyAt = 0
 window.addEventListener('keydown', () => (lastKeyAt = Date.now()), true)
@@ -436,9 +440,9 @@ export async function keepTabsWhile(run: () => Promise<[from: string, to: string
   }
 }
 
-export async function switchSessionAccount(tmux: string, account: string) {
+export async function switchSessionAccount(tmux: string, account: string, o: { resume?: boolean } = {}) {
   await keepTabsWhile(async () => {
-    const r = await api<{ tmux: string }>(`/api/sessions/${tmux}/account`, { account })
+    const r = await api<{ tmux: string }>(`/api/sessions/${tmux}/account`, { account, ...(o.resume ? { resume: true } : {}) })
     return [[tmux, r.tmux]]
   })
 }
@@ -591,4 +595,10 @@ export async function reviveSession(key: string) {
   const r = await api<{ tmux: string }>(`/api/sessions/${key}/revive`, {})
   await refresh()
   select(r.tmux)
+}
+
+/** Attach a running session under another one, or detach it (parent null), without stopping it [T1116-12]. */
+export async function setParent(key: string, parent: string | null) {
+  await api(`/api/sessions/${key}/parent`, { parent })
+  await refresh()
 }

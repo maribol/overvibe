@@ -79,6 +79,10 @@ overvibe send "<project>: <role>" "<message>"   # any Overvibe agent session, an
 overvibe ls                                      # each session's status (busy/idle/needs-you/suspended), tool, folder; --json for tmux ids
                                                  # suspended = stopped while idle to free memory; overvibe send revives it
 overvibe stop "<project>: <role>"                # close it once the work is in (the conversation is kept)
+overvibe suspend "<project>: <role>"             # free its memory while it waits (idle only); its row keeps the last screen
+overvibe revive "<project>: <role>" [--prompt "..."]  # bring a suspended one back in its row (overvibe send revives it too)
+overvibe attach "<session>" --to "<parent>"     # nest a running session under another (yours: only within your own sessions)
+overvibe detach "<session>"                      # take it out from under its parent; it keeps running
 overvibe stop --children                         # close every session you started with --attach, and the terminals you started
 overvibe ls --past [--cwd <folder>]              # stopped and past sessions, newest first
 overvibe search "<text>" [--json]               # which session said it (any session, stopped and hidden too), with the line

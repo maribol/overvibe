@@ -352,8 +352,9 @@ async function triage(p: Burst) {
   if (!b?.owner || !p.chat.cwd) return
   const cwd = p.chat.cwd
   const project = projectFor(cwd)
-  const readDirs = b.readDirs.filter((d) => existsSync(d))
-  const prompt = triagePrompt({ project, chat: p.chat.title, earlier: p.chat.type === 'private' ? [] : earlierIn(b.id, p.chat.id, p.msgs[0]!.at), batch: p.msgs, readDirs: readDirs.map(tildify) })
+  const snaps = await Promise.all(b.readDirs.filter((d) => existsSync(d)).map(snapshotOf))
+  const readDirs = snaps.map((s) => s.path)
+  const prompt = triagePrompt({ project, chat: p.chat.title, earlier: p.chat.type === 'private' ? [] : earlierIn(b.id, p.chat.id, p.msgs[0]!.at), batch: p.msgs, readDirs: snaps.map((s) => s.label) })
   const { v, account, cost } = await headless(cwd, prompt, readDirs)
   if (v.kind === 'chatter' && p.chat.type !== 'private') return
   const rid = crypto.randomUUID().replace(/-/g, '').slice(0, 10)
@@ -392,6 +393,46 @@ function reportMd(o: { chat: string; project: string; cwd: string; from: string[
     ...(v.reply ? ['', '## Draft reply', '', v.reply] : []),
     '',
   ].join('\n')
+}
+
+// ---- fresh copies of the extra read folders ----
+// A sibling repo's local checkout can be far behind (one was hundreds of commits behind), and the research run
+// cannot run git. For a git repo, the run reads a copy of origin/main instead: fetched at most hourly, made with git
+// archive (tracked files only, so no .env, .history or other untracked files), kept under <data dir>/telegram/snapshots.
+const SNAPS = join(DIR, 'snapshots')
+const SNAP_MS = 60 * 60_000
+async function git(dir: string, args: string[], ms = 30_000): Promise<string | null> {
+  const p = Bun.spawn(['git', '-C', dir, ...args], { stdout: 'pipe', stderr: 'ignore', env: cleanEnv({ GIT_TERMINAL_PROMPT: '0' }) })
+  const kill = setTimeout(() => p.kill(), ms)
+  const out = await new Response(p.stdout).text()
+  clearTimeout(kill)
+  return (await p.exited) === 0 ? out.trim() : null
+}
+export async function snapshotOf(dir: string): Promise<{ path: string; label: string }> {
+  const plain = { path: dir, label: tildify(dir) }
+  try {
+    if (!existsSync(join(dir, '.git'))) return plain
+    const out = join(SNAPS, `${dir.split('/').pop()}-${Bun.hash(dir).toString(16).slice(0, 8)}`)
+    const mark = readJson<{ rev: string; at: number } | null>(out + '.json', null)
+    if (!mark || Date.now() - mark.at > SNAP_MS) await git(dir, ['fetch', '--quiet', 'origin'], 60_000)
+    const ref = (await git(dir, ['rev-parse', '--verify', '--quiet', 'origin/main'])) ? 'origin/main' : (await git(dir, ['rev-parse', '--verify', '--quiet', 'origin/HEAD'])) ? 'origin/HEAD' : null
+    if (!ref) return plain
+    const rev = (await git(dir, ['rev-parse', ref]))!
+    if (mark?.rev !== rev || !existsSync(out)) {
+      ensure()
+      const tmp = out + '.tmp'
+      Bun.spawnSync(['rm', '-rf', tmp])
+      mkdirSync(tmp, { recursive: true, mode: 0o700 })
+      const a = Bun.spawnSync(['sh', '-c', 'git -C "$1" archive "$2" | tar -x -C "$3"', 'sh', dir, rev, tmp])
+      if (a.exitCode !== 0) return plain
+      Bun.spawnSync(['rm', '-rf', out])
+      renameSync(tmp, out)
+    }
+    writeJson(out + '.json', { rev, at: mark && mark.rev === rev && Date.now() - mark.at <= SNAP_MS ? mark.at : Date.now() })
+    return { path: out, label: `${tildify(dir)} (a copy of ${ref} at ${rev.slice(0, 9)}, current: read it instead of the local checkout)` }
+  } catch {
+    return plain
+  }
 }
 
 // ---- reports and buttons ----

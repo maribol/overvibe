@@ -176,11 +176,12 @@ function commandFor(input) {
     // ⌘⇧[ / ⌘⇧], the Mac tab-switch keys
     if (code === 'BracketLeft') return 'prev'
     if (code === 'BracketRight') return 'next'
-    return null
+    return null // ⌘⇧R falls through to the View menu's Reload
   }
   if (code === 'KeyN') return 'new'
   if (code === 'KeyW') return 'stop'
   if (code === 'KeyT') return 'shell'
+  if (code === 'KeyR') return 'rename' // ⌘R renames, like ⌥R in a browser; Reload is ⌘⇧R [T1116-9]
   if (code === 'KeyK' || code === 'KeyP') return 'palette'
   if (code === 'BracketLeft') return 'prev'
   if (code === 'BracketRight') return 'next'
@@ -287,6 +288,7 @@ function buildMenu() {
         item('New Session', 'Cmd+N', 'new'),
         item('New Shell Here', 'Cmd+T', 'shell'),
         item('Close Session…', 'Cmd+W', 'stop'),
+        item('Rename Session…', 'Cmd+R', 'rename'),
         { type: 'separator' },
         item('Quick Open', 'Cmd+K', 'palette'),
         item('Next Session', 'Ctrl+Tab', 'next'),
@@ -295,7 +297,7 @@ function buildMenu() {
     },
     {
       label: 'View',
-      submenu: [{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }],
+      submenu: [{ role: 'reload', accelerator: 'Cmd+Shift+R' }, { role: 'forceReload', accelerator: 'Cmd+Alt+Shift+R' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }],
     },
     // no Close item: ⌘W stops the session in the deck; the red button still closes the window
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }] },

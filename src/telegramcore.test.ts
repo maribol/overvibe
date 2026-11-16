@@ -106,3 +106,12 @@ describe('hostile text [security review]', () => {
     expect(p).toContain('never run a step that downloads')
   })
 })
+
+test('the research steps check claims against code and refuse to estimate unread code', () => {
+  const p = triagePrompt({ project: 'x', chat: 'c', earlier: [], batch: [{ at: 0, from: 'T', text: 'q' }], readDirs: ['~/code/api'] })
+  expect(p).toContain('are claims written by people or earlier agents')
+  expect(p).toContain('unverified: <repo> not read')
+  expect(p).toContain('estimate only the change from there')
+  expect(p).toContain('not a reason to turn down a cheap one')
+  expect(p).toContain('may be behind its remote')
+})

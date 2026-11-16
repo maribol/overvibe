@@ -41,5 +41,7 @@ to the page as the same actions the ⌥ shortcuts use:
 | ⌘] / ⌘[ (also ⌘⇧] / ⌘⇧[) | Next / previous session |
 | ⌘1 to ⌘9 | The Nth open tab |
 | ⌘K, ⌘P | Quick open |
+| ⌘R | Rename the open session (like ⌥R) |
+| ⌘⇧R | Reload the page |
 
 ⌘C, ⌘V and everything else pass through unchanged. In a browser none of this applies; the ⌥ keys stay.

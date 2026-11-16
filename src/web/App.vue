@@ -9,6 +9,7 @@ import AccountsPanel from './components/AccountsPanel.vue'
 import TerminalTabs from './components/TerminalTabs.vue'
 import SessionCard from './components/SessionCard.vue'
 import SuspendedView from './components/SuspendedView.vue'
+import LimitModal from './components/LimitModal.vue'
 import NewSessionModal from './components/NewSessionModal.vue'
 import AddAccountModal from './components/AddAccountModal.vue'
 import MessagesView from './components/MessagesView.vue'
@@ -18,6 +19,7 @@ import RequestsView from './components/RequestsView.vue'
 import SettingsView from './components/SettingsView.vue'
 import TasksView from './components/TasksView.vue'
 import MoveFolderModal from './components/MoveFolderModal.vue'
+import AttachModal from './components/AttachModal.vue'
 import RenameModal from './components/RenameModal.vue'
 import SessionMenu from './components/SessionMenu.vue'
 import PromptModal from './components/PromptModal.vue'
@@ -111,7 +113,7 @@ const actions = {
 function runCommand(cmd: string) {
   const m = /^tab:([1-9])$/.exec(cmd)
   if (m) actions.tab(Number(m[1]))
-  else if (cmd === 'new' || cmd === 'stop' || cmd === 'shell' || cmd === 'palette' || cmd === 'next' || cmd === 'prev') actions[cmd]()
+  else if (cmd === 'new' || cmd === 'stop' || cmd === 'shell' || cmd === 'palette' || cmd === 'next' || cmd === 'prev' || cmd === 'rename') actions[cmd]()
 }
 
 function onKey(e: KeyboardEvent) {
@@ -357,9 +359,11 @@ onUnmounted(() => {
     <NewSessionModal v-if="deck.newOpen" />
     <AddAccountModal v-if="deck.addAccountOpen" />
     <MoveFolderModal v-if="deck.moveFor" :s="deck.moveFor" />
+    <AttachModal v-if="deck.attachFor" :key="deck.attachFor.key" :s="deck.attachFor" />
     <RenameModal v-if="deck.renameFor" />
     <SessionMenu v-if="deck.menu" />
     <PromptModal />
+    <LimitModal />
     <QuestionModal />
     <CommandPalette v-if="deck.paletteOpen" />
     <StopModal v-if="deck.stopFor" :key="deck.stopFor.key" />

@@ -116,7 +116,7 @@ onBeforeUnmount(() => {
           <span class="min-w-0"><span class="font-semibold">{{ state.label }}</span><span v-if="state.text" class="opacity-90">: {{ state.text }}</span></span>
         </div>
         <p class="mt-3 text-[13px] leading-relaxed text-muted">
-          {{ s.suspendedBy === 'owner' ? 'You stopped it' : 'It sat idle, so Overvibe stopped it' }} to free its memory. The conversation is saved and picks up right where it left off.
+          {{ s.suspendedBy === 'owner' ? 'You stopped it' : s.suspendedBy === 'agent' ? 'The session that started it stopped it' : 'It sat idle, so Overvibe stopped it' }} to free its memory. The conversation is saved and picks up right where it left off.
         </p>
         <div class="mt-4 flex gap-2">
           <button class="btn btn-brand flex-1 justify-center" :disabled="busy" data-revive @click="revive">

@@ -14,7 +14,7 @@ import { DATA_DIR, DEMO, HOME, SCOPE, WORK_ROOT, cleanEnv, inScope, tildify, unt
 import { attachArgv, countSize, listSessions } from './src/tmux'
 import { guardedInput } from './src/mouseguard'
 import { deckClient, deliverNow, discard, kick as kickQueue, ownerInput, queueView } from './src/sendqueue'
-import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view, suspendSession, reviveSession, savedScreen, autoSuspend } from './src/sessions'
+import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view, suspendSession, reviveSession, savedScreen, autoSuspend, setParent, suspendFor, reviveFor, parentFor } from './src/sessions'
 import { SUSPEND_CHOICES } from './src/suspend'
 import { addBot, changeBot, requestAct, requestList, requestOne, requestsOn, requestsOpen, startTelegram, telegramView } from './src/telegram'
 import { accountFor, accountsOf, chromeAccountNow, getSettings, isMode, isPaused, modeFor, modeUnsaved, needsChrome, refusePaused, routeFor, ruleFor, setSettings, type Mode } from './src/routing'
@@ -633,6 +633,23 @@ async function api(req: Request, url: URL): Promise<Response> {
       return bad(e.message, e.status ?? 400)
     }
   }
+  // overvibe attach --to / detach [T1116-14]
+  if (p === '/api/parent') {
+    try {
+      return json(await parentFor({ session: String(body.session ?? '').slice(0, 200), to: body.to ? String(body.to).slice(0, 200) : null, from: String(body.from ?? '') }))
+    } catch (e: any) {
+      return bad(e.message)
+    }
+  }
+  // overvibe suspend / revive [T1116-13]
+  if (p === '/api/suspend' || p === '/api/revive') {
+    try {
+      const session = String(body.session ?? '').slice(0, 200)
+      return json(p === '/api/suspend' ? await suspendFor({ session, from: String(body.from ?? '') }) : await reviveFor({ session, prompt: typeof body.prompt === 'string' ? body.prompt.slice(0, 20000) : undefined }))
+    } catch (e: any) {
+      return bad(e.message)
+    }
+  }
   if (p === '/api/stop') {
     try {
       return json(await stopFor({ session: body.session ? String(body.session).slice(0, 200) : undefined, children: !!body.children, from: String(body.from ?? '') }))
@@ -724,7 +741,10 @@ async function api(req: Request, url: URL): Promise<Response> {
     const account = String(body.account ?? '')
     if (!listAccounts('claude').some((a) => a.name === account)) return bad('unknown account')
     refusePaused(account) // [T1112-11]
-    return json(await switchAccount(sw[1]!, account))
+    const next = await switchAccount(sw[1]!, account)
+    // after a usage limit: type "continue" so it picks up the turn the limit cut off (queued until its input is up) [T1116-8]
+    if (body.resume === true) await ownerSay(next.tmux, 'continue').catch((e) => console.log(`[limit] continue: ${e?.message ?? e}`))
+    return json(next)
   }
   if (p === '/api/accounts/switch-all') {
     const account = String(body.account ?? '')
@@ -896,6 +916,17 @@ async function api(req: Request, url: URL): Promise<Response> {
       return bad(e.message)
     }
   }
+  // attach to another session or detach, while it runs [T1116-12]
+  const par = /^\/api\/sessions\/([a-z0-9]+)\/parent$/.exec(p)
+  if (par) {
+    if (!getRecord(par[1]!)) return bad('unknown session', 404)
+    try {
+      const r = setParent(par[1]!, body.parent ? String(body.parent) : null)
+      return json({ ok: true, parent: r.parent ?? null })
+    } catch (e: any) {
+      return bad(e.message)
+    }
+  }
   // suspend to free memory, revive in the same row [T1116-3]
   const sus = /^\/api\/sessions\/([a-z0-9]+)\/(suspend|revive)$/.exec(p)
   if (sus) {
@@ -944,10 +975,17 @@ startTelegram() // Telegram bots read their linked groups and report to the owne
 startSkills() // sync the skills library into each CLI now and on every change [T1110-64]
 startUsagePing() // on by default, at most once a day, waits for setup's Welcome step [T1110-72, T1112-101]
 
-// keepalive: touch every account now and every 3 hours, so no login sits unused long enough to expire
-const KEEPALIVE_MS = 3 * 60 * 60 * 1000
-setTimeout(() => probeAll(getSettings().hiddenAccounts).catch(() => {}), 5_000)
-setInterval(() => probeAll(getSettings().hiddenAccounts).catch(() => {}), KEEPALIVE_MS)
+// usage bars: read every account now and every 5 minutes (was 3 hours, so the bars lagged far behind) [T1116-10].
+// A reading starts the CLI for a moment and sends no prompt: no tokens. It also keeps each login in use, so none expires.
+const USAGE_MS = 5 * 60 * 1000
+let probing = false
+const probeNow = () => {
+  if (probing) return
+  probing = true
+  probeAll(getSettings().hiddenAccounts).catch(() => {}).finally(() => (probing = false))
+}
+setTimeout(probeNow, 5_000)
+setInterval(probeNow, USAGE_MS)
 // a coordinator hears when a session it started ends on its own, hits a limit or waits on an answer [T1111-11]
 setInterval(() => autoSuspend().catch((e) => console.log(`[suspend] ${e?.message ?? e}`)), 60_000)
 setInterval(() => watchChildren().catch((e) => console.log(`[watch] ${e?.message ?? e}`)), WATCH_MS)

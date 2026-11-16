@@ -384,6 +384,13 @@ try {
     if (!name) throw new Error('not inside an Overvibe session (no OVERVIBE_SESSION); say which one: overvibe open "<session name>"')
     const r = await call('/api/focus', { session: name, from: SELF })
     console.log(`opened "${r.title}" in Overvibe`)
+  } else if (cmd === 'suspend' || cmd === 'revive') {
+    // free a session's memory, its last screen kept in its row; revive resumes it there [T1116-13]
+    const prompt = cmd === 'revive' ? flag('prompt') : undefined
+    const name = rest.filter((a, i) => a !== '--prompt' && rest[i - 1] !== '--prompt').join(' ').trim()
+    if (!name) throw new Error(`usage: overvibe ${cmd} "<session name>"${cmd === 'revive' ? ' [--prompt "<message>"]' : ''}`)
+    const r = await call(`/api/${cmd}`, { session: name, ...(cmd === 'suspend' ? { from: SELF } : prompt ? { prompt } : {}) })
+    console.log(r.already ? `"${r.name}" is ${cmd === 'suspend' ? 'already suspended' : 'not suspended'}` : cmd === 'suspend' ? `suspended "${r.name}": stopped to free its memory, its last screen kept; overvibe revive "${r.name}" (or a message to it) brings it back` : `revived "${r.name}" in its own row (same conversation)`)
   } else if (cmd === 'stop') {
     const children = rest.includes('--children')
     const name = rest.filter((a) => a !== '--children').join(' ').trim()
@@ -544,6 +551,13 @@ try {
       if (!r.ready) console.error('\n(still reading older conversations: some may be missing)')
       console.error('\nopen one on the owner\'s screen: overvibe open "<name>"; a stopped one: overvibe resume "<name | id>"')
     }
+  } else if ((cmd === 'attach' && rest.includes('--to')) || cmd === 'detach') {
+    // nest a running session under another, or take it out, without stopping it [T1116-14]
+    const to = cmd === 'attach' ? flag('to') : undefined
+    const name = rest.filter((a, i) => a !== '--to' && rest[i - 1] !== '--to').join(' ').trim()
+    if (!name || (cmd === 'attach' && !to)) throw new Error(cmd === 'attach' ? 'usage: overvibe attach "<session>" --to "<parent session>"' : 'usage: overvibe detach "<session>"')
+    const r = await call('/api/parent', { session: name, to: to ?? null, from: SELF })
+    console.log(r.parent ? `attached "${r.name}" to "${r.parent}" (both keep running)` : `detached "${r.name}" (it keeps running, on its own row)`)
   } else if (cmd === 'attach') {
     // a running Overvibe session (any kind: Claude, Codex, agy, shell) in the terminal this runs in
     const print = rest.includes('--print')
