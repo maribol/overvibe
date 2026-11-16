@@ -172,8 +172,8 @@ const updates = computed(() => deck.tools.filter((t) => t.update))
 // the footer tabs; Tasks only while Settings > Tasks view is on [T1112-16], with its open count [T1112-14]
 const navTabs = computed((): { id: 'tasks' | 'requests' | 'messages' | 'stats'; label: string; tip: string; icon: unknown }[] => [
   ...(tasksOn.value ? [{ id: 'tasks' as const, label: 'Tasks', tip: 'Tasks from every TASKS.md', icon: ListTodo }] : []),
-  // Telegram requests, researched and planned, while a bot is set up [T1113-3]
-  ...(deck.requests ? [{ id: 'requests' as const, label: 'Requests', tip: 'Customer requests from Telegram, with their research and plan', icon: Inbox }] : []),
+  // Telegram requests, researched and planned, while a bot is set up [T1113-3]; add-on help cards [T1116-18]
+  ...(deck.requests ? [{ id: 'requests' as const, label: 'Requests', tip: 'Customer requests from Telegram and help cards from the add-on', icon: Inbox }] : []),
   { id: 'messages', label: 'Messages', tip: 'Messages you sent to sessions', icon: MessageSquareText },
   { id: 'stats', label: 'Stats', tip: 'Stats: sessions, working time, waiting, usage', icon: ChartColumn },
 ])
@@ -254,6 +254,8 @@ watch(tasksOn, (on) => {
 })
 
 let timer: ReturnType<typeof setInterval>
+// the add-on's help cards are read every minute and when this window gets focus [T1116-18] (the server throttles it)
+const addonFocus = () => void (deck.requests ? api('/api/addon/poll', {}).catch(() => {}) : undefined)
 onMounted(() => {
   // a link to a session or view wins over the one remembered from last time
   if (location.hash.length > 2) applyUrl()
@@ -264,12 +266,14 @@ onMounted(() => {
   checkFirstRun() // the first-run setup, once per install [T1110-67]
   window.addEventListener('keydown', onKey, true)
   window.addEventListener('mousedown', remember, true)
+  window.addEventListener('focus', addonFocus)
   window.deckDesktop?.on(runCommand)
 })
 onUnmounted(() => {
   clearInterval(timer)
   window.removeEventListener('keydown', onKey, true)
   window.removeEventListener('mousedown', remember, true)
+  window.removeEventListener('focus', addonFocus)
 })
 </script>
 

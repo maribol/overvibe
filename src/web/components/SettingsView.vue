@@ -5,6 +5,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { ChevronDown, ChevronUp, EyeOff, GripVertical, LogIn, Plus, RefreshCw, Sparkles } from 'lucide-vue-next'
 import TelegramPanel from './TelegramPanel.vue'
+import AddonPanel from './AddonPanel.vue'
 import Spinner from './Spinner.vue'
 import WorkRootField from './WorkRootField.vue'
 import { openSetup } from '../setup'
@@ -496,6 +497,8 @@ const deckSessions = computed(() => deck.sessions.filter((s) => s.where === 'dec
         <SkillsPanel v-show="current === 'skills'" data-section="skills" />
 
         <TelegramPanel v-if="current === 'telegram'" data-section="telegram" />
+
+        <AddonPanel v-if="current === 'addon'" data-section="addon" />
 
         <!-- spawn limits [T1110-81] -->
         <section v-show="current === 'limits'" data-section="limits">

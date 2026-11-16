@@ -16,6 +16,7 @@ import { guardedInput } from './src/mouseguard'
 import { deckClient, deliverNow, discard, kick as kickQueue, ownerInput, queueView } from './src/sendqueue'
 import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view, suspendSession, reviveSession, savedScreen, autoSuspend, setParent, suspendFor, reviveFor, parentFor } from './src/sessions'
 import { SUSPEND_CHOICES } from './src/suspend'
+import { addon, startAddon } from './src/addon'
 import { addBot, changeBot, requestAct, requestList, requestOne, requestsOn, requestsOpen, startTelegram, telegramView } from './src/telegram'
 import { accountFor, accountsOf, chromeAccountNow, getSettings, isMode, isPaused, modeFor, modeUnsaved, needsChrome, refusePaused, routeFor, ruleFor, setSettings, type Mode } from './src/routing'
 import { loadRouter, routerActive } from './src/localrouter'
@@ -304,7 +305,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     const accounts = listAccounts(undefined, { hidden: getSettings().hiddenAccounts }).map((a) => (DEMO && a.email ? { ...a, email: `${a.name}@example.com` } : a)).map((a) => (a.tool === 'claude' ? { ...a, chrome: chromeOf(a.name) } : a)).map((a) => (isPaused(a.name, a.tool) ? { ...a, paused: true } : a))
     const v = await scopedView()
     refreshTidy()
-    return json({ ...v, sessions: v.sessions.map((s) => withQueue(s)).map((s) => (tidyDone.has(s.key) && s.status !== 'busy' && s.status !== 'waiting' ? { ...s, tidy: tidyDone.get(s.key) } : owesNow(s) ? { ...s, owes: tidyOwes.get(s.key)!.reason } : s)), accounts, tools: await toolStatus(), home: tildify(HOME), homeAbs: HOME, settings: getSettings(), chromeAccount: chromeAccountNow(), router: routerActive(), self: selfUpdate(), pending: pendingAll().filter((x) => inScope(x.cwd)), focus: getFocus(), build: buildId(), requests: requestsOn() ? { open: requestsOpen() } : null })
+    return json({ ...v, sessions: v.sessions.map((s) => withQueue(s)).map((s) => (tidyDone.has(s.key) && s.status !== 'busy' && s.status !== 'waiting' ? { ...s, tidy: tidyDone.get(s.key) } : owesNow(s) ? { ...s, owes: tidyOwes.get(s.key)!.reason } : s)), accounts, tools: await toolStatus(), home: tildify(HOME), homeAbs: HOME, settings: getSettings(), chromeAccount: chromeAccountNow(), router: routerActive(), self: selfUpdate(), pending: pendingAll().filter((x) => inScope(x.cwd)), focus: getFocus(), build: buildId(), requests: requestsOn() || addon.on() ? { open: requestsOpen() + addon.openCount() } : null })
   }
   // what Send feedback's "Include version and OS" adds, shown in the dialog before it goes [T1112-120]
   if (p === '/api/feedback/env' && req.method === 'GET') return json(await feedbackEnv())
@@ -433,7 +434,9 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (p === '/api/requests' && req.method === 'GET') {
     const rid = url.searchParams.get('rid')
     try {
-      return json(rid ? requestOne(rid) : { requests: requestList() })
+      // add-on help cards ride along as their own kind [T1116-18]
+      const help = url.searchParams.get('help')
+      return json(help ? addon.one(help) : rid ? requestOne(rid) : { requests: requestList(), help: addon.rows() })
     } catch (e: any) {
       return bad(e.message, 404)
     }
@@ -441,7 +444,25 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (p === '/api/requests/act') {
     if (body.from || proofOnly) return bad('only the owner acts on requests', 403)
     try {
+      if (body.help) {
+        const msg = await addon.act(String(body.help), body.act, body.text)
+        return json({ msg, help: addon.one(String(body.help)) })
+      }
       return json(await requestAct(String(body.rid ?? ''), body.act, body.text))
+    } catch (e: any) {
+      return bad(e.message)
+    }
+  }
+  // Settings > Add-on [T1116-18]: the token goes in and never comes back out
+  if (p === '/api/addon' && req.method === 'GET') return json(addon.view())
+  if (p === '/api/addon/picture' && req.method === 'GET') return (await addon.picture(url.searchParams.get('key') ?? '')) ?? bad('no picture', 404)
+  if (p === '/api/addon' || p === '/api/addon/poll' || p === '/api/addon/apps') {
+    if (body.from || proofOnly) return bad('only the owner can change the add-on', 403)
+    try {
+      if (p === '/api/addon/poll') await addon.pollSoon()
+      else if (p === '/api/addon/apps') await addon.refreshApps(true)
+      else return json(addon.setConfig(body))
+      return json(addon.view())
     } catch (e: any) {
       return bad(e.message)
     }
@@ -972,6 +993,7 @@ async function api(req: Request, url: URL): Promise<Response> {
 startTranscripts()
 startSearch() // [T1112-18]
 startTelegram() // Telegram bots read their linked groups and report to the owner [T1113-3]
+startAddon() // add-on help cards: poll the add-on, watch their TASKS lines [T1116-18]
 startSkills() // sync the skills library into each CLI now and on every change [T1110-64]
 startUsagePing() // on by default, at most once a day, waits for setup's Welcome step [T1110-72, T1112-101]
 

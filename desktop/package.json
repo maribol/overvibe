@@ -1,7 +1,7 @@
 {
   "name": "agent-deck-desktop",
   "productName": "Overvibe",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
   "main": "main.cjs",
   "trustedDependencies": ["electron"],

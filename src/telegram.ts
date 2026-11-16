@@ -15,6 +15,8 @@ import { projectFor } from './projects'
 import { accountFor } from './routing'
 import { startSession } from './sessions'
 import { addTask } from './tasklist'
+import { readHelpCallback, type HelpAct } from './addoncore'
+import type { TelegramPort } from './addonhelp'
 import { REPLY_SHOWN, VERDICT_SCHEMA, WORTH_LABEL, clean, fenced, label, buildPrompt, clip, isToken, newCode, readCallback, readVerdict, reportButtons, reportText, triagePrompt, type Said, type Verdict } from './telegramcore'
 
 export type Chat = { id: number; title: string; type: string; cwd: string | null }
@@ -217,6 +219,14 @@ async function onPrivate(b: Bot, m: any) {
   // the owner answering a report: their text goes to the chat the report is about
   const re = m.reply_to_message?.message_id
   if (re) {
+    // a reply to an add-on help card or to its Reply / Won't fix question [T1116-18]
+    if (helpHandler && text) {
+      try {
+        if ((await helpHandler.reply(b.id, re, text)) !== null) return
+      } catch (e: any) {
+        return say(b, m.chat.id, `That did not work: ${clip(String(e?.message ?? e), 300)}`)
+      }
+    }
     const r = reports().find((x) => x.bot === b.id && x.ownerMsg === re)
     if (r && text) return sendReply(b, r, text)
   }
@@ -473,6 +483,19 @@ function ensureTask(r: Report): string {
 async function onButton(b: Bot, q: any) {
   const ack = (text?: string) => call(b, 'answerCallbackQuery', { callback_query_id: q.id, ...(text ? { text } : {}) }).catch(() => {})
   if (!b.owner || q.from?.id !== b.owner.id) return ack('Not yours.')
+  // add-on help cards [T1116-18]: src/addonhelp.ts acts, the card's message follows
+  const h = readHelpCallback(String(q.data ?? ''))
+  if (h) {
+    if (!helpHandler) return ack('Help cards are off (Settings > Add-on).')
+    await ack()
+    try {
+      const said = await helpHandler.button(h.key, h.act)
+      if (said && (h.act === 'reply' || h.act === 'wontfix')) await say(b, b.owner.id, said).catch(() => {})
+    } catch (e: any) {
+      await say(b, b.owner.id, `That did not work: ${clip(String(e?.message ?? e), 300)}`).catch(() => {})
+    }
+    return
+  }
   const c = readCallback(String(q.data ?? ''))
   const r = c && loadReport(c.rid)
   if (!c || !r || r.bot !== b.id) return ack('That report is gone.')
@@ -625,4 +648,36 @@ export function startTelegram() {
   if (DEMO) return
   for (const b of bots) run(b)
   for (const k of Object.keys(pending)) arm(k)
+}
+
+// ---- add-on help cards [T1116-18] ----
+// The paired owner's private chat gets each new card with Add task / Start session / Reply / Won't fix; src/addonhelp.ts
+// decides what they do. The first bot that is on and paired carries them.
+type HelpHandler = { button(key: string, act: HelpAct): Promise<string>; reply(bot: string, msg: number, text: string): Promise<string | null> }
+let helpHandler: HelpHandler | null = null
+export const onHelp = (h: HelpHandler | null) => void (helpHandler = h)
+export function helpTelegram(): TelegramPort | null {
+  const first = bots.find((b) => b.on && b.owner)
+  if (!first) return null
+  const owned = (id: string) => {
+    const b = botBy(id)
+    if (!b?.owner) throw new Error('that bot is no longer paired')
+    return b as Bot & { owner: { id: number; name: string } }
+  }
+  return {
+    async send(text, buttons) {
+      const m: any = await say(first, first.owner!.id, text, { reply_markup: { inline_keyboard: buttons } })
+      return m?.message_id ? { bot: first.id, msg: m.message_id } : null
+    },
+    async edit(ref, buttons, note) {
+      const b = owned(ref.bot)
+      await call(b, 'editMessageReplyMarkup', { chat_id: b.owner.id, message_id: ref.msg, reply_markup: { inline_keyboard: buttons } }).catch(() => {})
+      if (note) await say(b, b.owner.id, note, { reply_parameters: { message_id: ref.msg, allow_sending_without_reply: true } }).catch(() => {})
+    },
+    async ask(ref, text) {
+      const b = owned(ref.bot)
+      const m: any = await say(b, b.owner.id, text, { reply_parameters: { message_id: ref.msg, allow_sending_without_reply: true }, reply_markup: { force_reply: true, input_field_placeholder: 'Your text' } })
+      return m?.message_id ?? null
+    },
+  }
 }
