@@ -1,6 +1,6 @@
 {
   "name": "overvibe",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Claude Code, Codex and agy side by side on your Mac or Linux machine, and a CLI that lets them start and message each other.",
   "type": "module",
   "license": "MIT",
@@ -45,11 +45,12 @@
     "start": "bun run build && bun server.ts",
     "build": "vite build",
     "dev": "trap 'kill 0' EXIT; vite build --watch & bun --watch server.ts",
-    "test": "bun test src",
+    "test": "bun test src scripts",
     "typecheck": "tsc --noEmit -p tsconfig.json && vue-tsc --noEmit -p src/web/tsconfig.json",
     "desktop": "cd desktop && bun install && bun run start",
     "desktop:build": "cd desktop && bun install && bun run build",
     "install-cli": "bash scripts/install-cli.sh",
-    "smoke": "bun scripts/smoke.ts"
+    "smoke": "bun scripts/smoke.ts",
+    "release": "bash scripts/release.sh"
   }
 }

@@ -14,7 +14,7 @@ describe('sessionRef', () => {
   })
   test('a folder outside home stays absolute; a look-alike prefix is not home', () => {
     expect(tildePath('/opt/x', '/Users/me')).toBe('/opt/x')
-    expect(tildePath('/Users/meg/x', '/Users/me')).toBe('/Users/meg/x')
+    expect(tildePath('/home/meg/x', '/home/me')).toBe('/home/meg/x')
     expect(tildePath('/Users/me/x', '')).toBe('/Users/me/x')
   })
 })

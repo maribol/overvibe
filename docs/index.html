@@ -307,8 +307,8 @@ waiting  claude overvibe shop: lead                                 ~/code/shop
 idle     claude outside  notes                                      ~/notes</code></pre>
       <p>Columns: status (<code>busy</code>, <code>idle</code>, <code>waiting</code>, <code>blocked</code>, <code>ended</code>), tool, whether it runs in the deck or outside it, name (<code>↳</code> marks an attached child), folder.</p>
 <pre class="cols"><code><span class="p">$ </span>overvibe ls --past --cwd ~/code/shop
-12m ago  codex  01a1c5cb ↳ shop: codex review                       ~/code/shop  (closed)
-3h ago   claude 4bfe9201 shop: lead                                 ~/code/shop</code></pre>
+12m ago  codex  7e3f0a12 ↳ shop: codex review                       ~/code/shop  (closed)
+3h ago   claude c5d81b6e shop: lead                                 ~/code/shop</code></pre>
       <p><code>--past</code> lists stopped and past sessions instead, newest first: when it was last active, tool, the start of its conversation id, name, folder. Closed children and hidden rows are included and marked. <code>--cwd</code> keeps one folder and the ones under it, <code>--limit</code> sets how many (20 by default), <code>--json</code> prints the records.</p>
 
       <h3>overvibe open</h3>
@@ -329,7 +329,7 @@ overvibe stop --children</code></pre>
         <li><code>--prompt</code> is typed in once the session is up. <code>--attach</code> makes it a child of the calling session. <code>--fork</code> starts a copy with a new id and leaves the original alone (Claude only; it also works on a running session).</li>
       </ul>
 <pre><code><span class="p">$ </span>overvibe resume "shop: codex review" --prompt "One more: does the index build lock writes? Reply with overvibe send \"$OVERVIBE_SESSION\" \"&lt;answer&gt;\""
-resumed "shop: codex review" in ~/code/shop (codex, session 01a1c5cb-..., tmux d3b2c9f0), attached</code></pre>
+resumed "shop: codex review" in ~/code/shop (codex, session 7e3f0a12-..., tmux d3b2c9f0), attached</code></pre>
 
       <h3>overvibe attach</h3>
 <pre><code>overvibe attach "&lt;session name&gt;" [--print]</code></pre>

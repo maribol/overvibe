@@ -150,6 +150,8 @@ export function chromeAccountNow(): string | null {
   return paired.length === 1 ? paired[0]!.name : null
 }
 
+import { roomierThan } from './fullroute'
+
 export type Route = { account: string; by: 'asked' | 'chrome' | 'router' | 'rules'; note?: string }
 
 /**
@@ -163,6 +165,11 @@ export async function routeFor(cwd: string, asked?: string, chrome?: boolean, to
   const d = rulesOf(tool).defaultAccount
   const names = accountsOf(tool).map((a) => a.name)
   const s = settle({ tool, account: r.account, by: r.by, accounts: names, paused: settings.pausedAccounts, defaultAccount: d !== 'auto' && names.includes(d) ? d : 'default' })
+  // an automatic pick at its usage limit moves to the account with the most room; asked-for and Chrome stay [T1116-15]
+  if (r.by === 'rules' || r.by === 'router') {
+    const roomy = roomierThan(s.account ?? r.account, accountsOf(tool), accountsOf(tool).map((a) => a.name).filter((n) => isPaused(n, tool)))
+    if (roomy) return { ...r, ...s, account: roomy.account, note: [s.note, roomy.note].filter(Boolean).join('; ') }
+  }
   return { ...r, ...s }
 }
 
