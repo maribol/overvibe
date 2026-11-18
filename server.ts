@@ -14,7 +14,7 @@ import { DATA_DIR, DEMO, HOME, SCOPE, WORK_ROOT, cleanEnv, inScope, tildify, unt
 import { attachArgv, countSize, listSessions } from './src/tmux'
 import { guardedInput } from './src/mouseguard'
 import { deckClient, deliverNow, discard, kick as kickQueue, ownerInput, queueView } from './src/sendqueue'
-import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view, suspendSession, reviveSession, savedScreen, autoSuspend, setParent, suspendFor, reviveFor, parentFor } from './src/sessions'
+import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view, suspendSession, reviveSession, savedScreen, autoSuspend, setParent, suspendFor, reviveFor, parentFor, memGuard, subagentOf, showInCli } from './src/sessions'
 import { SUSPEND_CHOICES } from './src/suspend'
 import { addon, startAddon } from './src/addon'
 import { addBot, changeBot, requestAct, requestList, requestOne, requestsOn, requestsOpen, startTelegram, telegramView } from './src/telegram'
@@ -386,6 +386,24 @@ async function api(req: Request, url: URL): Promise<Response> {
   // a suspended session's last screen (ANSI), shown under its Revive overlay [T1116-3]
   const scr = /^\/api\/sessions\/([a-z0-9]+)\/screen$/.exec(p)
   if (scr && req.method === 'GET') return json({ screen: savedScreen(scr[1]!) })
+  // switch Claude Code's own view to a subagent (or main) by its keys [T1118-3]
+  const cv = /^\/api\/sessions\/([a-z0-9]+)\/cli-view$/.exec(p)
+  if (cv && req.method === 'POST') {
+    try {
+      return json(await showInCli(cv[1]!, body.id ? { id: String(body.id).slice(0, 40) } : { main: true }))
+    } catch (e: any) {
+      return bad(e.message)
+    }
+  }
+  // one subagent of a session: what it is doing, from its transcript [T1118-2]
+  const sub = /^\/api\/sessions\/([a-z0-9]+)\/agents\/([a-z0-9]+)$/i.exec(p)
+  if (sub && req.method === 'GET') {
+    try {
+      return json(subagentOf(sub[1]!, sub[2]!))
+    } catch (e: any) {
+      return bad(e.message)
+    }
+  }
   if (p === '/api/summary' && req.method === 'GET') {
     const id = url.searchParams.get('id') ?? ''
     if (!/^[0-9a-f-]{36}$/.test(id)) return bad('bad session id')
@@ -422,7 +440,7 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (p === '/api/search' && req.method === 'GET') {
     const q = (url.searchParams.get('q') ?? '').slice(0, 200)
     if (q.trim().length < 2) return json({ results: [], ready: true, ms: 0 })
-    return json(await searchSessions(q, { limit: Number(url.searchParams.get('limit')) || 20, screens: (['agents', 'none'] as const).find((x) => x === url.searchParams.get('screens')) ?? 'all', hidden: url.searchParams.get('hidden') !== '0' }))
+    return json(await searchSessions(q, { limit: Number(url.searchParams.get('limit')) || 20, screens: (['agents', 'none'] as const).find((x) => x === url.searchParams.get('screens')) ?? 'all', hidden: url.searchParams.get('hidden') !== '0', ...(url.searchParams.get('role') === 'you' ? { role: 'you' as const, per: 20 } : {}) }))
   }
   // overvibe ls --past: stopped and past sessions (closed children and hidden rows flagged)
   if (p === '/api/past' && req.method === 'GET') {
@@ -1010,6 +1028,8 @@ setTimeout(probeNow, 5_000)
 setInterval(probeNow, USAGE_MS)
 // a coordinator hears when a session it started ends on its own, hits a limit or waits on an answer [T1111-11]
 setInterval(() => autoSuspend().catch((e) => console.log(`[suspend] ${e?.message ?? e}`)), 60_000)
+// memory guard [T1117-3]: a session's runaway process (37 GB test runs crashed the Mac) is killed and the session told
+setInterval(() => memGuard().catch((e) => console.log(`[memguard] ${e?.message ?? e}`)), 10_000)
 setInterval(() => watchChildren().catch((e) => console.log(`[watch] ${e?.message ?? e}`)), WATCH_MS)
 
 // the login link holds the token: keep it in a private file, never in the log

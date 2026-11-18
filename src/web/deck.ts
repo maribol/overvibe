@@ -8,6 +8,8 @@ import { nextAfterGroup, type Planned } from '../closeall'
 export type Status = 'busy' | 'idle' | 'waiting' | 'ended' | 'blocked'
 export type Session = {
   key: string
+  /** its subagents still running (the Agent tool) [T1118-2] */
+  agents?: { id: string; desc: string; type: string; started: number; at: number }[]
   where: 'deck' | 'terminal' | 'background' | 'past'
   status: Status
   title: string
@@ -111,6 +113,8 @@ export const deck = reactive({
   moveFor: null as Session | null,
   /** Attach to… picker for this session [T1116-12] */
   attachFor: null as Session | null,
+  /** a subagent shown in place of its session's terminal [T1118-2] */
+  subagent: null as { key: string; id: string; why?: string } | null,
   /** Tasks > Follow up with agent is open (its text must survive a new build's reload) [T1112-14] */
   followupOpen: false,
   /** the "Compact <session>?" dialog from a ⌘-clicked /compact suggestion is open [T1112-91] */
@@ -288,8 +292,25 @@ function noteRecent(key: string) {
   const r = [key, ...recentKeys().filter((k) => k !== key)].slice(0, 20)
   localStorage.setItem('deck.recent', JSON.stringify(r))
 }
+/** Show one subagent of a session (read-only) in the main area [T1118-2]; `why`: Claude Code could not switch to it. */
+export function openSubagent(key: string, id: string, why?: string) {
+  select(key)
+  deck.subagent = { key, id, ...(why ? { why } : {}) }
+}
+/** Switch Claude Code's own view to that subagent (or main) and show the terminal; if it can't (a draft, a menu),
+ * show the read-only view with the reason [T1118-3]. */
+export async function showSubagent(key: string, id: string | null) {
+  try {
+    await api(`/api/sessions/${key}/cli-view`, id ? { id } : {})
+    select(key)
+  } catch (e: any) {
+    if (id) openSubagent(key, id, e.message)
+    else throw e
+  }
+}
 export function select(key: string | null) {
   if (key) noteRecent(key)
+  deck.subagent = null
   if (key) setView('terminal')
   deck.selected = key
   if (key) localStorage.setItem('deck.selected', key)

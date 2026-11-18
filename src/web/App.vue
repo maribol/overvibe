@@ -9,6 +9,7 @@ import AccountsPanel from './components/AccountsPanel.vue'
 import TerminalTabs from './components/TerminalTabs.vue'
 import SessionCard from './components/SessionCard.vue'
 import SuspendedView from './components/SuspendedView.vue'
+import SubagentView from './components/SubagentView.vue'
 import LimitModal from './components/LimitModal.vue'
 import NewSessionModal from './components/NewSessionModal.vue'
 import AddAccountModal from './components/AddAccountModal.vue'
@@ -40,6 +41,8 @@ import { vTip, type TipBody } from './tip'
 import { openNews, unreadNews } from './news'
 import { alt } from './keys'
 import { api, applyUrl, openSettings, replaceUrl, versionOf, askStop, closeRow, closeTab, current, deck, openNew, openRename, refresh, select, setView, startShell, workRoot } from './deck'
+// a subagent of the open session, shown read-only in place of its terminal [T1118-2]
+const subOpen = computed(() => deck.view === 'terminal' && !!deck.subagent && current.value?.key === deck.subagent.key)
 
 // Shortcuts use Option: Chrome keeps ⌘N/⌘T/⌘W for itself and never hands them to a page.
 // e.code, not e.key: Option turns N into "˜" on a Mac keyboard. Capture phase, so the terminal
@@ -348,8 +351,9 @@ onUnmounted(() => {
         <SettingsView v-else-if="deck.view === 'settings'" />
         <TasksView v-else-if="deck.view === 'tasks' && tasksOn" />
         <!-- terminals stay mounted while another view is shown, so their connections survive -->
-        <TerminalTabs v-if="deck.tabs.length" v-show="deck.view === 'terminal'" :class="current?.tmux ? 'min-h-0 flex-1' : ''" />
-        <SuspendedView v-if="deck.view === 'terminal' && current && !current.tmux && current.suspended" :key="'sus-' + current.key" :s="current" />
+        <TerminalTabs v-if="deck.tabs.length" v-show="deck.view === 'terminal' && !subOpen" :class="current?.tmux ? 'min-h-0 flex-1' : ''" />
+        <SubagentView v-if="subOpen" :key="'sub-' + deck.subagent!.id" :s="current!" :id="deck.subagent!.id" />
+        <SuspendedView v-else-if="deck.view === 'terminal' && current && !current.tmux && current.suspended" :key="'sus-' + current.key" :s="current" />
         <SessionCard v-else-if="deck.view === 'terminal' && current && !current.tmux" :key="current.key" :s="current" class="min-h-0 flex-1 overflow-y-auto" />
         <div v-if="deck.view === 'terminal' && !current" class="grid flex-1 place-items-center p-8">
           <div class="max-w-md text-center">

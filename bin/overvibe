@@ -553,7 +553,10 @@ try {
     }
   } else if ((cmd === 'attach' && rest.includes('--to')) || cmd === 'detach') {
     // nest a running session under another, or take it out, without stopping it [T1116-14]
-    const to = cmd === 'attach' ? flag('to') : undefined
+    // --to me: the session running this command [T1116-19]
+    const toArg = cmd === 'attach' ? flag('to') : undefined
+    const to = toArg === 'me' ? SELF || undefined : toArg
+    if (toArg === 'me' && !SELF) throw new Error('--to me works only from inside an Overvibe session; name the parent session instead')
     const name = rest.filter((a, i) => a !== '--to' && rest[i - 1] !== '--to').join(' ').trim()
     if (!name || (cmd === 'attach' && !to)) throw new Error(cmd === 'attach' ? 'usage: overvibe attach "<session>" --to "<parent session>"' : 'usage: overvibe detach "<session>"')
     const r = await call('/api/parent', { session: name, to: to ?? null, from: SELF })
@@ -571,7 +574,12 @@ try {
       console.log(argv.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' '))
       process.exit(0)
     }
-    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('attach needs a terminal (run it in a terminal window, not from a script); --print shows the tmux command')
+    if (!process.stdin.isTTY || !process.stdout.isTTY)
+      throw new Error(
+        SELF
+          ? `attach without --to opens the session in a terminal, which a tool call has no way to do. To nest "${hit.title}" under this session while it keeps running: overvibe attach "${hit.title}" --to me. Don't stop and resume it to attach it.`
+          : 'attach needs a terminal (run it in a terminal window, not from a script); --print shows the tmux command; --to "<parent>" nests it under another session instead',
+      )
     console.error(`attaching to "${hit.title}"; Ctrl-b d detaches and leaves it running`)
     // TMUX unset: Overvibe has its own tmux server, so attaching from inside another tmux is fine
     const env = { ...process.env }

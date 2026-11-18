@@ -57,7 +57,7 @@ function hiddenIds(): Record<string, number> {
   }
 }
 
-export async function searchSessions(q: string, o: { limit?: number; screens?: 'all' | 'agents' | 'none'; hidden?: boolean } = {}) {
+export async function searchSessions(q: string, o: { limit?: number; screens?: 'all' | 'agents' | 'none'; hidden?: boolean; role?: Role; per?: number } = {}) {
   const t0 = performance.now()
   const limit = Math.max(1, Math.min(50, o.limit ?? 20))
   const all = await rows()
@@ -65,7 +65,7 @@ export async function searchSessions(q: string, o: { limit?: number; screens?: '
   const bySid = new Map<string, ViewSession[]>()
   for (const s of all) if (s.sessionId) bySid.set(s.sessionId, [...(bySid.get(s.sessionId) ?? []), s])
   const hid = hiddenIds()
-  for (const h of index.search(q, { limit: limit * 2 })) {
+  for (const h of index.search(q, { limit: limit * 2, role: o.role, per: o.per })) {
     const cands = bySid.get(h.sessionId) ?? []
     const r = cands.find(live) ?? cands.find((s) => s.where === 'deck') ?? cands[0]
     const cwd = r?.cwd ?? (h.cwd ? tildify(h.cwd) : '')

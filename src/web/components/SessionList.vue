@@ -10,7 +10,8 @@ import { SESSION_MIME } from '../../sessionref'
 import { fileForCwd } from '../../taskview'
 import { taskFiles, tasksOn } from '../tasks'
 import TaskTip from './TaskTip.vue'
-import { ago, askStop, deck, draggedSession, isCoordinator, isPinned, openNew, orderProjects, OTHER, pinId, projectOf, rememberProjects, saveProjectOrder, select, setPinned, shortCwd, type Session } from '../deck'
+import SubagentRows from './SubagentRows.vue'
+import { ago, askStop, deck, draggedSession, isCoordinator, isPinned, openNew, orderProjects, OTHER, pinId, projectOf, rememberProjects, saveProjectOrder, select, setPinned, shortCwd, showSubagent, type Session } from '../deck'
 
 const q = ref('')
 const closedOpen = ref(localStorage.getItem('deck.closedOpen') !== '0')
@@ -250,6 +251,12 @@ function onOut(e: PointerEvent) {
   }
   hideSoon()
 }
+// a click on the open session's own row takes Claude Code back to `main` from a subagent's view (a no-op on main) [T1118-3]
+function rowClick(s: Session) {
+  const open = deck.selected === s.key && !deck.subagent && deck.view === 'terminal'
+  if (open && s.tmux && s.kind === 'claude' && (s.tool ?? 'claude') === 'claude') return void showSubagent(s.key, null).catch(() => {})
+  select(s.key)
+}
 </script>
 
 <template>
@@ -266,13 +273,13 @@ function onOut(e: PointerEvent) {
       <div v-if="!deck.loaded" class="px-2.5 py-3 text-[13px] text-faint">Loading…</div>
       <div v-if="pinned.length" class="mb-2 mt-1">
         <div class="side-label flex items-center gap-1 px-2 pb-1"><Pin :size="11" /> Pinned</div>
+        <template v-for="{ s, depth, kids } in pinnedRows" :key="'p' + s.key">
         <button
-          v-for="{ s, depth, kids } in pinnedRows" :key="'p' + s.key"
           class="side-row group"
           :style="depth ? { paddingLeft: `${10 + depth * 16}px` } : undefined"
           :data-sel="s.key === deck.selected ? '1' : undefined" :data-key="s.key" :draggable="canDrag(s) ? 'true' : undefined" :class="[s.key === deck.selected ? 'is-sel' : s.status === 'waiting' ? 'is-wait' : s.apiError ? 'is-err' : s.tidy ? 'is-tidy' : '', depth ? 'is-child' : '']"
           :title="rowTitle(s, `${s.title}\n${s.cwd}${isClosed(s) ? '\nNot running: click to open its card' : ''}${s.question ? '\nNeeds you: ' + s.question : ''}`)"
-          @click="select(s.key)"
+          @click="rowClick(s)"
           @contextmenu.prevent="openMenu($event, s)"
         >
           <span v-if="depth" class="-ml-1 flex-none text-[11px] leading-none text-[var(--color-line-strong)]" title="Attached to the session above (deck new --attach)">↳</span>
@@ -297,6 +304,8 @@ function onOut(e: PointerEvent) {
           <span class="row-time w-6 flex-none text-right text-[10.5px] tabular-nums text-faint opacity-70">{{ ago(s.last) }}</span>
           <button v-if="canClose(s)" type="button" class="row-x w-6 flex-none items-center justify-end text-faint hover:text-[var(--color-danger)]" title="Close (⌘W): stops it, unpins and hides it; the conversation is kept" @click.stop="askStop(s, { close: true })" @mousedown.stop><X :size="13" /></button>
         </button>
+        <SubagentRows :s="s" :depth="depth" />
+        </template>
       </div>
       <div v-if="coordinators.length && !q" class="mb-2 mt-1 rounded-lg border border-line p-1">
         <div class="side-label px-1.5 pb-1 pt-0.5">Coordinators</div>
@@ -330,14 +339,13 @@ function onOut(e: PointerEvent) {
         </button>
         <template v-if="!folded.has(g.name)">
           <div v-for="f in g.folders" :key="f.cwd">
+            <template v-for="{ s, depth, kids } in f.rows" :key="s.key">
             <button
-              v-for="{ s, depth, kids } in f.rows"
-              :key="s.key"
               class="side-row group"
               :style="depth ? { paddingLeft: `${10 + depth * 16}px` } : undefined"
               :data-sel="s.key === deck.selected ? '1' : undefined" :data-key="s.key" :draggable="canDrag(s) ? 'true' : undefined" :class="[s.key === deck.selected ? 'is-sel' : s.status === 'waiting' ? 'is-wait' : s.apiError ? 'is-err' : s.tidy ? 'is-tidy' : '', depth ? 'is-child' : '']"
               :title="rowTitle(s, `${s.title}\n${s.cwd}${s.where === 'terminal' ? '\nOpen in a Terminal tab' : s.where === 'background' ? '\nRunning in the background' : ''}${s.question ? '\nNeeds you: ' + s.question : ''}`)"
-              @click="select(s.key)"
+              @click="rowClick(s)"
             @contextmenu.prevent="openMenu($event, s)"
             >
               <span v-if="depth" class="-ml-1 flex-none text-[11px] leading-none text-[var(--color-line-strong)]" title="Attached to the session above (deck new --attach)">↳</span>
@@ -364,6 +372,8 @@ function onOut(e: PointerEvent) {
               <span class="row-time w-6 flex-none text-right text-[10.5px] tabular-nums text-faint opacity-70">{{ ago(s.last) }}</span>
           <button v-if="canClose(s)" type="button" class="row-x w-6 flex-none items-center justify-end text-faint hover:text-[var(--color-danger)]" title="Close (⌘W): stops it, unpins and hides it; the conversation is kept" @click.stop="askStop(s, { close: true })" @mousedown.stop><X :size="13" /></button>
             </button>
+            <SubagentRows :s="s" :depth="depth" />
+            </template>
           </div>
         </template>
       </div>

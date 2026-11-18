@@ -154,6 +154,14 @@ export function realTmux(env: Record<string, string | undefined> = process.env):
 }
 export const TMUX_BIN = realTmux()
 
+// A UTF-8 locale for everything Overvibe starts [T1118-1]. Started by the desktop app (launchd), the server gets
+// no LANG/LC_*; tmux then takes its clients for non-UTF-8 and prints "_" for every character outside ASCII
+// (Claude Code's logo came out as black boxes and dashes), and shells in sessions run without UTF-8 too.
+if (!/utf-?8/i.test(process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || '')) {
+  if (process.env.LC_ALL) delete process.env.LC_ALL
+  process.env.LANG = process.platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8'
+}
+
 /**
  * The environment for everything the deck starts. When the server is launched from inside a Claude
  * Code session it inherits that session's variables; a child `claude` would think it is nested.

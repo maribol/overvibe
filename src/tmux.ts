@@ -84,6 +84,8 @@ export async function newSession(name: string, cwd: string, argv: string[], env:
     PATH: pathWithShim(SHIM.dir, env.PATH ?? process.env.PATH),
     OVERVIBE_TMUX_BIN: TMUX_BIN,
     ZDOTDIR: SHIM.zdotdir,
+    // a session started by the desktop app has no locale otherwise (src/env.ts) [T1118-1]
+    ...(env.LANG || !process.env.LANG ? {} : { LANG: process.env.LANG }),
     ...(userZ ? { OVERVIBE_USER_ZDOTDIR: userZ } : {}),
   }
   const e = Object.entries({ ...env, ...guard }).flatMap(([k, v]) => ['-e', `${k}=${v}`])
@@ -137,7 +139,8 @@ export async function clientActivity(skip: Set<number> = new Set()): Promise<Map
 // reports its size, so it would sit at the 120x40 default. Each client starts out ignored for sizing
 // (ignore-size) and counts only once its page sends a real size (countSize), so a background tab can
 // never shrink the window of the one on screen.
-export const attachArgv = (name: string) => [...TMUX, 'attach-session', '-f', 'ignore-size', '-t', `=${name}`]
+// -u: the page's terminal is UTF-8 whatever the server's locale says [T1118-1]
+export const attachArgv = (name: string) => [...TMUX, '-u', 'attach-session', '-f', 'ignore-size', '-t', `=${name}`]
 
 /** let the client whose process is `pid` size its window (after its page sent a real size) */
 export async function countSize(pid: number) {

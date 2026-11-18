@@ -81,7 +81,7 @@ overvibe ls                                      # each session's status (busy/i
 overvibe stop "<project>: <role>"                # close it once the work is in (the conversation is kept)
 overvibe suspend "<project>: <role>"             # free its memory while it waits (idle only); its row keeps the last screen
 overvibe revive "<project>: <role>" [--prompt "..."]  # bring a suspended one back in its row (overvibe send revives it too)
-overvibe attach "<session>" --to "<parent>"     # nest a running session under another (yours: only within your own sessions)
+overvibe attach "<session>" --to me             # nest a running session under you (or --to "<parent>"); it keeps running, never stop and resume it to attach
 overvibe detach "<session>"                      # take it out from under its parent; it keeps running
 overvibe stop --children                         # close every session you started with --attach, and the terminals you started
 overvibe ls --past [--cwd <folder>]              # stopped and past sessions, newest first
@@ -90,7 +90,7 @@ overvibe resume "<name>" --prompt "<follow-up>"  # same conversation again, back
 overvibe new --tool shell --cwd <dir> --name "<name>" [--prompt "<command>"]   # a plain terminal, no agent; send refuses it; stop it when done
 overvibe peek "<name>" [--lines N]               # the last lines of its screen (default 40): what it is doing now
 overvibe context ["<name>"] [--json]             # what its context holds now (default: this session), from its transcript
-overvibe attach "<name>"                         # that session in the terminal you are in (Ctrl-b d detaches)
+overvibe attach "<name>"                         # the owner's own terminal only (needs a TTY; from a tool call use --to me)
 overvibe messages [--with "<name>"] [--json]     # what sessions sent each other, whole, oldest first (last 50)
 overvibe read <id>                               # one message you got, whole (its id is in the message line)
 ```

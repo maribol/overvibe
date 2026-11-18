@@ -2,6 +2,7 @@
 // deck sessions, sessions open elsewhere (Terminal tabs, `claude --bg`), and recent past sessions.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { totalmem } from 'node:os'
 import { AGY_BIN, CLAUDE_BIN, CODEX_BIN, CONFIG, DATA_DIR, HOME, REMOTE_CONTROL, WORK_ROOT, cleanEnv, tildify, untildify, type Tool } from './env'
 import { capture, captureStyled, forgetEnv, killSession, listSessions, newSession, sendKeys as keys, typeInto, typeLiteral, type Pane } from './tmux'
 import { cliOf, findCli, idFromArgs, isShellCommand, parsePs, pickConversation, under, type Proc } from './handcli'
@@ -16,6 +17,9 @@ import { projectFor } from './projects'
 import { readPrompt, type ScreenPrompt } from './prompts'
 import { forSession } from './skills'
 import { checkoutOf, worktreeReport, type Worktree } from './worktree'
+import { runningSubagents, subagentLog, subagentMeta, type SubAgent } from './subagents'
+import { alreadyShown, listRows, nextKey, targetRow } from './subnav'
+import { killNote, parseMemPs, procLimitMb, sessionProcs, toKill, totalLimitMb } from './memguard'
 import { cleanBody, hashSecret, newSecret, notAgent, noteHeader, wrap, wrapShort, type Sender } from './peer'
 import { randomBytes } from 'node:crypto'
 import { hookSettings } from './inbox'
@@ -626,6 +630,78 @@ async function backfillVerdicts() {
 }
 
 /** Every minute: suspend the agents idle longer than Settings > Running sessions allows. */
+/** Memory guard [T1117-3] (src/memguard.ts): kill a session's process that runs away with the Mac's memory, and
+ * tell that session. Runs every 10 s from server.ts; one note per session per 10 minutes. */
+const memTold = new Map<string, number>()
+/** One subagent's activity, for the page [T1118-2]: the session's own transcript folder only. */
+export function subagentOf(tmux: string, id: string) {
+  const r = getRecord(tmux)
+  const tm = r?.sessionId ? tmeta(r.sessionId) : undefined
+  if (!tm?.file) throw new Error('no transcript for this session')
+  return subagentLog(tm.file, id)
+}
+/**
+ * Switch Claude Code's own view to one of its subagents, or back to main [T1118-3] (src/subnav.ts): ↓/↑ read
+ * against the screen until ❯ is on that row, then Enter. Never over a draft or an open menu (sendqueue busyReason).
+ */
+export async function showInCli(tmux: string, want: { main: true } | { id: string }) {
+  const r = getRecord(tmux)
+  if (!r || r.kind !== 'claude' || (r.tool ?? 'claude') !== 'claude') throw new Error('only Claude Code sessions list subagents')
+  let target: { main: true } | { desc: string; index: number } = { main: true }
+  if ('id' in want) {
+    const tm = r.sessionId ? tmeta(r.sessionId) : undefined
+    // Claude Code also lists a subagent that finished its turn but still runs a background shell: by its meta
+    const list = tm?.file ? runningSubagents(tm.file) : []
+    const meta = tm?.file ? subagentMeta(tm.file, want.id) : null
+    if (!meta) throw new Error('no such subagent in this session')
+    target = { desc: meta.desc, index: Math.max(0, list.findIndex((a) => a.id === want.id)) }
+  }
+  const why = await busyReason(tmux, 'claude', { force: true })
+  if (why) throw new Error(`Claude Code can't switch right now: ${why}`)
+  for (let i = 0; i < 16; i++) {
+    const rows = listRows(await capture(tmux, 30))
+    if (!rows.length) throw new Error("its agent list is not on screen")
+    const at = targetRow(rows, target)
+    if (at < 0) throw new Error('that subagent is not in its agent list')
+    if (i === 0 && alreadyShown(rows, at)) return { ok: true, already: true }
+    const key = nextKey(rows, at)
+    await keys(tmux, [key])
+    if (key === 'Enter') return { ok: true }
+    await Bun.sleep(120)
+  }
+  throw new Error('could not reach that row in its agent list')
+}
+export async function memGuard() {
+  const p = Bun.spawn(['ps', '-axo', 'pid=,ppid=,rss=,args='], { env: { ...cleanEnv(), LC_ALL: 'C' }, stdout: 'pipe', stderr: 'ignore' })
+  const out = await new Response(p.stdout).text()
+  await p.exited
+  const panes = await listSessions()
+  const roots = new Map(panes.filter((x) => x.pid).map((x) => [x.pid, x.name] as [number, string]))
+  if (!roots.size) return []
+  const total = totalmem()
+  const lim = { procMb: procLimitMb(total), totalMb: totalLimitMb(total) }
+  const kills = toKill(sessionProcs(parseMemPs(out), roots), lim)
+  for (const k of kills) {
+    try {
+      process.kill(k.pid, 'SIGKILL')
+    } catch {
+      continue
+    }
+    console.log(`[memguard] killed pid ${k.pid} in ${k.tmux} at ${k.rssMb} MB (${k.why}): ${k.args.slice(0, 200)}`)
+    try {
+      appendFileSync(join(DATA_DIR, 'memguard.log'), `${new Date().toISOString()} ${k.tmux} pid=${k.pid} ${k.rssMb}MB ${k.why} ${k.args.slice(0, 300)}\n`)
+    } catch {}
+    const r = getRecord(k.tmux)
+    if (!r || r.kind !== 'claude' || Date.now() - (memTold.get(k.tmux) ?? 0) < 10 * 60_000) continue
+    memTold.set(k.tmux, Date.now())
+    const text = killNote(k, lim)
+    const tool = r.tool ?? 'claude'
+    await enqueue({ tmux: r.tmux, tool, toName: r.name, toSession: r.sessionId || null, from: 'Overvibe', fromSession: null, text, body: `[overvibe note: written by Overvibe itself, not by an agent] ${cleanBody(text)}` }).catch(() => {})
+    logPeer({ at: Date.now(), from: 'Overvibe', fromSession: null, fromTmux: null, fromTool: null, sender: 'overvibe', to: r.name, toSession: r.sessionId || null, toTmux: r.tmux, toTool: tool, text })
+  }
+  return kills
+}
+
 export async function autoSuspend(now = Date.now()) {
   if (!backfilled) await backfillVerdicts().catch((e) => console.log(`[suspend] verdicts: ${e?.message ?? e}`))
   const min = suspendMinutes(getSettings().suspendIdleMin)
@@ -833,6 +909,8 @@ export type ViewSession = {
   status: 'busy' | 'idle' | 'waiting' | 'ended' | 'blocked'
   /** the turn is over but Claude Code still lists a background shell or subagent */
   bg?: boolean
+  /** its subagents (the Agent tool) still running [T1118-2] */
+  agents?: SubAgent[]
   /** its last reply stopped on an API error (computer slept, overloaded...): it does nothing until told to go on [T1112-1] */
   apiError?: string
   /** its conversation file is gone (old background sessions), so it cannot be resumed or copied */
@@ -1088,6 +1166,7 @@ export async function view(o: { all?: boolean } = {}) {
       sessionId: r.sessionId || null, tmux: alive.has(r.tmux) ? r.tmux : null, kind: r.kind,
       last, waitingReason: prompt ? 'a choice on its screen' : status === 'waiting' && q ? 'last reply ends with a question' : null,
       bg: pane ? hasBg(l) : undefined, prompt, question: prompt?.title ?? (status === 'waiting' ? q : null),
+      ...(pane && r.kind === 'claude' && tm?.file && runningSubagents(tm.file).length ? { agents: runningSubagents(tm.file) } : {}),
       ...(pane && claude && r.kind === 'claude' && r.sessionId && !isBusy(l) && !prompt && apiErrorOf(r.sessionId) ? { apiError: apiErrorOf(r.sessionId)!.text } : {}),
       // its subscription's usage limit ("You've hit your weekly limit · resets ..."): the page offers another account [T1116-8]
       ...(pane && claude && r.kind === 'claude' && !r.hand && r.sessionId && !isBusy(l) && apiErrorOf(r.sessionId)?.code === 'rate_limit' ? { limit: apiErrorOf(r.sessionId)!.text } : {}),

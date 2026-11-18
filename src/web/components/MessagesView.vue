@@ -2,7 +2,7 @@
 // Mine: everything the owner typed into any session (Terminal tabs included), newest first, with the
 // session it went to. Between agents: the whole log of messages sessions sent each other (overvibe send,
 // and Overvibe's own notes) [T1111-12]. Click one to open the session it went to.
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Search } from 'lucide-vue-next'
 import { ago, agoText, api, deck, openSession, select, setView, shortCwd } from '../deck'
 
@@ -41,9 +41,30 @@ onUnmounted(() => clearInterval(t))
 // the sidebar's title for a session is the best one (deck name, /rename, Claude Code title)
 const titleOf = (m: Msg) => deck.sessions.find((s) => s.sessionId === m.sessionId)?.title ?? m.title ?? m.sessionId.slice(0, 8)
 const statusOf = (m: Msg) => deck.sessions.find((s) => s.sessionId === m.sessionId)
+// The page holds the newest 300 messages; a search also asks the full-text index (every transcript, older ones
+// too) for the owner's own lines, so a message from earlier today or last week is found [T1117-2].
+const older = ref<Msg[]>([])
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+let searchSeq = 0
+watch(q, (v) => {
+  clearTimeout(searchTimer)
+  const n = v.trim()
+  if (n.length < 2) return void (older.value = [])
+  const seq = ++searchSeq
+  searchTimer = setTimeout(async () => {
+    try {
+      const r = await api<{ results: { sessionId: string | null; title: string; cwd: string; hits: { at: number; role: string; snippet: string }[] }[] }>(`/api/search?q=${encodeURIComponent(n)}&limit=50&screens=none&role=you`)
+      if (seq !== searchSeq) return
+      older.value = r.results.flatMap((x) => (x.sessionId ? x.hits.filter((h) => h.role === 'you').map((h) => ({ sessionId: x.sessionId!, at: h.at, text: h.snippet, title: x.title, cwd: x.cwd })) : []))
+    } catch {}
+  }, 250)
+})
 const shown = computed(() => {
   const n = q.value.trim().toLowerCase()
-  return n ? list.value.filter((m) => `${m.text} ${titleOf(m)} ${m.cwd ?? ''}`.toLowerCase().includes(n)) : list.value
+  if (!n) return list.value
+  const near = list.value.filter((m) => `${m.text} ${titleOf(m)} ${m.cwd ?? ''}`.toLowerCase().includes(n))
+  const have = new Set(near.map((m) => `${m.sessionId}|${Math.round(m.at / 1000)}`))
+  return [...near, ...older.value.filter((m) => !have.has(`${m.sessionId}|${Math.round(m.at / 1000)}`))].sort((a, b) => b.at - a.at)
 })
 const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 </script>

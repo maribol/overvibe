@@ -335,7 +335,7 @@ export function createIndex(o: IndexOpts) {
   }
 
   /** Sessions whose messages hold every word of `q`, newest match first, at most `per` hits each. */
-  function search(q: string, opts: { limit?: number; per?: number } = {}): SessionHits[] {
+  function search(q: string, opts: { limit?: number; per?: number; role?: Role } = {}): SessionHits[] {
     const words = terms(q)
     if (!words.length) return []
     refresh()
@@ -349,7 +349,7 @@ export function createIndex(o: IndexOpts) {
       // newest first within a file, and a file stops at `per` hits
       for (let i = e.docs.length - 1; i >= 0 && n < per; i--) {
         const d = e.docs[i]!
-        if (!ok(d.text)) continue
+        if ((opts.role && d.role !== opts.role) || !ok(d.text)) continue
         n++
         let s = by.get(e.sid)
         if (!s) by.set(e.sid, (s = { sessionId: e.sid, tool: e.tool, cwd: e.cwd, title: e.title ?? e.first, at: 0, hits: [] }))
