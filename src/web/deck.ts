@@ -10,6 +10,8 @@ export type Session = {
   key: string
   /** its subagents still running (the Agent tool) [T1118-2] */
   agents?: { id: string; desc: string; type: string; started: number; at: number }[]
+  /** the subagent Claude Code shows now, read off its screen [T1118-5] */
+  shownAgent?: string
   where: 'deck' | 'terminal' | 'background' | 'past'
   status: Status
   title: string
@@ -299,11 +301,22 @@ export function openSubagent(key: string, id: string, why?: string) {
 }
 /** Switch Claude Code's own view to that subagent (or main) and show the terminal; if it can't (a draft, a menu),
  * show the read-only view with the reason [T1118-3]. */
+/** What the page just asked Claude Code to show, until the screen reading catches up (about a second) [T1118-8] */
+export const pendingShown = ref<{ key: string; id: string | null; until: number } | null>(null)
+/** The subagent Claude Code shows for `s` (null: main): the click just made, else what its screen says. */
+export function shownAgentOf(s: Session): string | null {
+  const p = pendingShown.value
+  if (p && p.key === s.key && p.until > Date.now()) return p.id
+  return s.shownAgent ?? null
+}
 export async function showSubagent(key: string, id: string | null) {
+  pendingShown.value = { key, id, until: Date.now() + 4000 }
+  // the session shows at once; Claude Code's own view follows a moment later [T1118-6]
+  if (deck.selected !== key || deck.subagent) select(key)
   try {
     await api(`/api/sessions/${key}/cli-view`, id ? { id } : {})
-    select(key)
   } catch (e: any) {
+    pendingShown.value = null
     if (id) openSubagent(key, id, e.message)
     else throw e
   }

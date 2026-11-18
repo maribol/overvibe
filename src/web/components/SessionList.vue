@@ -11,7 +11,7 @@ import { fileForCwd } from '../../taskview'
 import { taskFiles, tasksOn } from '../tasks'
 import TaskTip from './TaskTip.vue'
 import SubagentRows from './SubagentRows.vue'
-import { ago, askStop, deck, draggedSession, isCoordinator, isPinned, openNew, orderProjects, OTHER, pinId, projectOf, rememberProjects, saveProjectOrder, select, setPinned, shortCwd, showSubagent, type Session } from '../deck'
+import { ago, askStop, deck, draggedSession, isCoordinator, isPinned, openNew, orderProjects, OTHER, pinId, projectOf, rememberProjects, saveProjectOrder, select, setPinned, shortCwd, showSubagent, shownAgentOf, type Session } from '../deck'
 
 const q = ref('')
 const closedOpen = ref(localStorage.getItem('deck.closedOpen') !== '0')
@@ -251,6 +251,8 @@ function onOut(e: PointerEvent) {
   }
   hideSoon()
 }
+// the session row stays highlighted unless one of its subagents is the one shown [T1118-5]
+const isSel = (s: Session) => s.key === deck.selected && !deck.subagent && !shownAgentOf(s)
 // a click on the open session's own row takes Claude Code back to `main` from a subagent's view (a no-op on main) [T1118-3]
 function rowClick(s: Session) {
   const open = deck.selected === s.key && !deck.subagent && deck.view === 'terminal'
@@ -277,7 +279,7 @@ function rowClick(s: Session) {
         <button
           class="side-row group"
           :style="depth ? { paddingLeft: `${10 + depth * 16}px` } : undefined"
-          :data-sel="s.key === deck.selected ? '1' : undefined" :data-key="s.key" :draggable="canDrag(s) ? 'true' : undefined" :class="[s.key === deck.selected ? 'is-sel' : s.status === 'waiting' ? 'is-wait' : s.apiError ? 'is-err' : s.tidy ? 'is-tidy' : '', depth ? 'is-child' : '']"
+          :data-sel="s.key === deck.selected ? '1' : undefined" :data-key="s.key" :draggable="canDrag(s) ? 'true' : undefined" :class="[isSel(s) ? 'is-sel' : s.status === 'waiting' ? 'is-wait' : s.apiError ? 'is-err' : s.tidy ? 'is-tidy' : '', depth ? 'is-child' : '']"
           :title="rowTitle(s, `${s.title}\n${s.cwd}${isClosed(s) ? '\nNot running: click to open its card' : ''}${s.question ? '\nNeeds you: ' + s.question : ''}`)"
           @click="rowClick(s)"
           @contextmenu.prevent="openMenu($event, s)"
@@ -343,7 +345,7 @@ function rowClick(s: Session) {
             <button
               class="side-row group"
               :style="depth ? { paddingLeft: `${10 + depth * 16}px` } : undefined"
-              :data-sel="s.key === deck.selected ? '1' : undefined" :data-key="s.key" :draggable="canDrag(s) ? 'true' : undefined" :class="[s.key === deck.selected ? 'is-sel' : s.status === 'waiting' ? 'is-wait' : s.apiError ? 'is-err' : s.tidy ? 'is-tidy' : '', depth ? 'is-child' : '']"
+              :data-sel="s.key === deck.selected ? '1' : undefined" :data-key="s.key" :draggable="canDrag(s) ? 'true' : undefined" :class="[isSel(s) ? 'is-sel' : s.status === 'waiting' ? 'is-wait' : s.apiError ? 'is-err' : s.tidy ? 'is-tidy' : '', depth ? 'is-child' : '']"
               :title="rowTitle(s, `${s.title}\n${s.cwd}${s.where === 'terminal' ? '\nOpen in a Terminal tab' : s.where === 'background' ? '\nRunning in the background' : ''}${s.question ? '\nNeeds you: ' + s.question : ''}`)"
               @click="rowClick(s)"
             @contextmenu.prevent="openMenu($event, s)"

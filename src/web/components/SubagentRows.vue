@@ -3,14 +3,15 @@
 // Claude Code's own view of that subagent (its keys, src/subnav.ts), or a read-only view when it can't switch. They come and go with the session's Agent tool calls; nothing to stop or move here.
 import { computed, ref } from 'vue'
 import { Bot } from 'lucide-vue-next'
-import { ago, deck, showSubagent, type Session } from '../deck'
+import { ago, deck, showSubagent, shownAgentOf, type Session } from '../deck'
 
 const props = defineProps<{ s: Session; depth?: number }>()
 const all = ref(false)
 const list = computed(() => props.s.agents ?? [])
 const shown = computed(() => (all.value || list.value.length <= 5 ? list.value : list.value.slice(0, 4)))
 const pad = computed(() => ({ paddingLeft: `${10 + ((props.depth ?? 0) + 1) * 16}px` }))
-const isOpen = (id: string) => deck.subagent?.key === props.s.key && deck.subagent.id === id
+// open read-only here, or shown in Claude Code's own view of the selected session [T1118-5]
+const isOpen = (id: string) => (deck.subagent?.key === props.s.key && deck.subagent.id === id) || (!deck.subagent && deck.selected === props.s.key && shownAgentOf(props.s) === id)
 </script>
 
 <template>

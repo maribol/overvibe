@@ -18,7 +18,7 @@ import { readPrompt, type ScreenPrompt } from './prompts'
 import { forSession } from './skills'
 import { checkoutOf, worktreeReport, type Worktree } from './worktree'
 import { runningSubagents, subagentLog, subagentMeta, type SubAgent } from './subagents'
-import { alreadyShown, listRows, nextKey, targetRow } from './subnav'
+import { alreadyShown, keysTo, listRows, nextKey, targetRow } from './subnav'
 import { killNote, parseMemPs, procLimitMb, sessionProcs, toKill, totalLimitMb } from './memguard'
 import { cleanBody, hashSecret, newSecret, notAgent, noteHeader, wrap, wrapShort, type Sender } from './peer'
 import { randomBytes } from 'node:crypto'
@@ -633,6 +633,16 @@ async function backfillVerdicts() {
 /** Memory guard [T1117-3] (src/memguard.ts): kill a session's process that runs away with the Mac's memory, and
  * tell that session. Runs every 10 s from server.ts; one note per session per 10 minutes. */
 const memTold = new Map<string, number>()
+/** Which running subagent Claude Code's view shows, read off its agent list (the filled dot) [T1118-5]. */
+async function shownAgentOf(tmux: string, list: SubAgent[]): Promise<string | undefined> {
+  const rows = listRows(await capture(tmux, 30).catch(() => ''))
+  const at = rows.findIndex((x) => x.shown)
+  if (at < 0 || rows[at]!.main) return undefined
+  const label = rows[at]!.label.toLowerCase()
+  const byDesc = list.find((a) => a.desc && label.includes(a.desc.toLowerCase()))
+  const index = rows.slice(0, at).filter((x) => !x.main).length
+  return (byDesc ?? list[index])?.id
+}
 /** One subagent's activity, for the page [T1118-2]: the session's own transcript folder only. */
 export function subagentOf(tmux: string, id: string) {
   const r = getRecord(tmux)
@@ -658,16 +668,29 @@ export async function showInCli(tmux: string, want: { main: true } | { id: strin
   }
   const why = await busyReason(tmux, 'claude', { force: true })
   if (why) throw new Error(`Claude Code can't switch right now: ${why}`)
+  let screen = await capture(tmux, 30)
   for (let i = 0; i < 16; i++) {
-    const rows = listRows(await capture(tmux, 30))
+    const rows = listRows(screen)
     if (!rows.length) throw new Error("its agent list is not on screen")
     const at = targetRow(rows, target)
     if (at < 0) throw new Error('that subagent is not in its agent list')
     if (i === 0 && alreadyShown(rows, at)) return { ok: true, already: true }
-    const key = nextKey(rows, at)
-    await keys(tmux, [key])
-    if (key === 'Enter') return { ok: true }
-    await Bun.sleep(120)
+    // ❯ in the list: all the keys in one go [T1118-6]
+    const all = keysTo(rows, at)
+    if (all) {
+      await keys(tmux, all)
+      return { ok: true }
+    }
+    await keys(tmux, [nextKey(rows, at)])
+    // the next screen as soon as it changes (Claude Code redraws in a few ms), not a fixed wait
+    for (let t = 0; t < 20; t++) {
+      await Bun.sleep(15)
+      const next = await capture(tmux, 30)
+      if (next !== screen) {
+        screen = next
+        break
+      }
+    }
   }
   throw new Error('could not reach that row in its agent list')
 }
@@ -911,6 +934,8 @@ export type ViewSession = {
   bg?: boolean
   /** its subagents (the Agent tool) still running [T1118-2] */
   agents?: SubAgent[]
+  /** the subagent Claude Code's own view shows now (its filled dot on screen); absent: main [T1118-5] */
+  shownAgent?: string
   /** its last reply stopped on an API error (computer slept, overloaded...): it does nothing until told to go on [T1112-1] */
   apiError?: string
   /** its conversation file is gone (old background sessions), so it cannot be resumed or copied */
@@ -1166,7 +1191,7 @@ export async function view(o: { all?: boolean } = {}) {
       sessionId: r.sessionId || null, tmux: alive.has(r.tmux) ? r.tmux : null, kind: r.kind,
       last, waitingReason: prompt ? 'a choice on its screen' : status === 'waiting' && q ? 'last reply ends with a question' : null,
       bg: pane ? hasBg(l) : undefined, prompt, question: prompt?.title ?? (status === 'waiting' ? q : null),
-      ...(pane && r.kind === 'claude' && tm?.file && runningSubagents(tm.file).length ? { agents: runningSubagents(tm.file) } : {}),
+      ...(pane && r.kind === 'claude' && tm?.file && runningSubagents(tm.file).length ? { agents: runningSubagents(tm.file), shownAgent: await shownAgentOf(r.tmux, runningSubagents(tm.file)) } : {}),
       ...(pane && claude && r.kind === 'claude' && r.sessionId && !isBusy(l) && !prompt && apiErrorOf(r.sessionId) ? { apiError: apiErrorOf(r.sessionId)!.text } : {}),
       // its subscription's usage limit ("You've hit your weekly limit · resets ..."): the page offers another account [T1116-8]
       ...(pane && claude && r.kind === 'claude' && !r.hand && r.sessionId && !isBusy(l) && apiErrorOf(r.sessionId)?.code === 'rate_limit' ? { limit: apiErrorOf(r.sessionId)!.text } : {}),

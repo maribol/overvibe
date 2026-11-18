@@ -71,9 +71,14 @@ watch(
     timer = setTimeout(load, 1500)
   },
 )
+// the popover opens to the right of the meter, or to its left when that would run off the window [T1118-7]
+const toLeft = ref(false)
 function toggle() {
   open.value = !open.value
-  if (open.value) void load()
+  if (!open.value) return
+  const r = box.value?.getBoundingClientRect()
+  toLeft.value = !!r && r.left + Math.min(440, window.innerWidth * 0.85) > window.innerWidth - 8
+  void load()
 }
 const away = (e: MouseEvent) => open.value && box.value && !box.value.contains(e.target as Node) && (open.value = false)
 onMounted(() => {
@@ -97,7 +102,7 @@ onBeforeUnmount(() => {
       {{ compact && rep.window ? `${Math.round(rep.percent ?? 0)}%` : label }}
     </button>
     <span v-else class="whitespace-nowrap text-[11.5px] text-faint" :title="[err, usedTitle].filter(Boolean).join('. ')">Context: {{ err.startsWith('not available') ? 'not available for agy' : 'none yet' }}</span>
-    <div v-if="open && rep" class="absolute left-0 top-full z-30 mt-1.5 w-[440px] max-w-[85vw] rounded-lg border border-line bg-surface p-3 text-[12.5px] text-ink shadow-lg" data-context-popover>
+    <div v-if="open && rep" :class="toLeft ? 'right-0' : 'left-0'" class="absolute top-full z-30 mt-1.5 w-[440px] max-w-[85vw] rounded-lg border border-line bg-surface p-3 text-[12.5px] text-ink shadow-lg" data-context-popover>
       <div class="flex items-baseline gap-2">
         <span class="font-semibold">{{ rep.total.toLocaleString() }} tokens</span>
         <span v-if="rep.window" class="text-muted">of {{ k(rep.window) }} · {{ rep.percent }}%</span>

@@ -41,3 +41,11 @@ export function nextKey(rows: ListRow[], target: number): 'Enter' | 'Down' | 'Up
 
 /** Claude Code already shows that row, and ↑/↓ have not moved off it: nothing to press. */
 export const alreadyShown = (rows: ListRow[], target: number) => rows[target]?.shown === true && !rows.some((r, i) => r.selected && i !== target)
+
+/** Once ❯ is in the list, every key at once: the arrows to the target, then Enter; null while nothing there is
+ * chosen yet (↓ first walks the footer's pills, a number the screen has to tell) [T1118-6]. */
+export function keysTo(rows: ListRow[], target: number): string[] | null {
+  const at = rows.findIndex((r) => r.selected)
+  if (at < 0) return null
+  return [...Array(Math.abs(target - at)).fill(target > at ? 'Down' : 'Up'), 'Enter']
+}

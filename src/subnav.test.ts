@@ -50,3 +50,12 @@ describe('subagent navigation [T1118-3]', () => {
     expect(nextKey(onFork, 0)).toBe('Up')
   })
 })
+
+import { keysTo } from './subnav'
+test('keysTo: every arrow and Enter at once when ❯ is in the list, null before [T1118-6]', () => {
+  const rows = (sel: number) => ['main', 'a', 'b', 'c'].map((l, i) => ({ label: l, selected: i === sel, main: l === 'main', shown: i === 0 }))
+  expect(keysTo(rows(0), 3)).toEqual(['Down', 'Down', 'Down', 'Enter'])
+  expect(keysTo(rows(3), 1)).toEqual(['Up', 'Up', 'Enter'])
+  expect(keysTo(rows(2), 2)).toEqual(['Enter'])
+  expect(keysTo(rows(-1), 2)).toBeNull()
+})
