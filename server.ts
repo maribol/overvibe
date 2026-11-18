@@ -17,7 +17,7 @@ import { deckClient, deliverNow, discard, kick as kickQueue, ownerInput, queueVi
 import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view, suspendSession, reviveSession, savedScreen, autoSuspend, setParent, suspendFor, reviveFor, parentFor, memGuard, subagentOf, showInCli } from './src/sessions'
 import { SUSPEND_CHOICES } from './src/suspend'
 import { addon, startAddon } from './src/addon'
-import { addBot, changeBot, requestAct, requestList, requestOne, requestsOn, requestsOpen, startTelegram, telegramView } from './src/telegram'
+import { addBot, changeBot, requestAct, requestList, researching, retryFailed, requestOne, requestsOn, requestsOpen, startTelegram, telegramView } from './src/telegram'
 import { accountFor, accountsOf, chromeAccountNow, getSettings, isMode, isPaused, modeFor, modeUnsaved, needsChrome, refusePaused, routeFor, ruleFor, setSettings, type Mode } from './src/routing'
 import { loadRouter, routerActive } from './src/localrouter'
 import { chromeOf, ensureAccount, fullUntil, hasAccounts, keyOf, listAccounts, loginArgv, probe, probeAll, toolStatus, forgetToolStatus, validName, watchLogin, type AccountTool } from './src/accounts'
@@ -454,7 +454,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     try {
       // add-on help cards ride along as their own kind [T1116-18]
       const help = url.searchParams.get('help')
-      return json(help ? addon.one(help) : rid ? requestOne(rid) : { requests: requestList(), help: addon.rows() })
+      return json(help ? addon.one(help) : rid ? requestOne(rid) : { requests: requestList(), help: addon.rows(), researching: researching() })
     } catch (e: any) {
       return bad(e.message, 404)
     }
@@ -466,6 +466,8 @@ async function api(req: Request, url: URL): Promise<Response> {
         const msg = await addon.act(String(body.help), body.act, body.text)
         return json({ msg, help: addon.one(String(body.help)) })
       }
+      // a failed research run: Retry or Dismiss [T1118-15]
+      if (body.failed) return json(retryFailed(String(body.failed), body.act === 'dismiss'))
       return json(await requestAct(String(body.rid ?? ''), body.act, body.text))
     } catch (e: any) {
       return bad(e.message)
@@ -838,6 +840,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     // Settings > Sidebar [T1112-138]: the account usage rows on or off, and projects or newest at the top
     if (body.sidebarAccounts !== undefined) next.sidebarAccounts = !!body.sidebarAccounts
     // Settings > Running sessions: suspend idle agents after this many minutes, 0 = never [T1116-3]
+    if (body.helpCardsTelegram !== undefined) next.helpCardsTelegram = !!body.helpCardsTelegram
     if (body.suspendIdleMin !== undefined) {
       if (!(SUSPEND_CHOICES as readonly number[]).includes(Number(body.suspendIdleMin))) return bad(`suspend after: one of ${SUSPEND_CHOICES.join(', ')} minutes`)
       next.suspendIdleMin = Number(body.suspendIdleMin)

@@ -5,8 +5,12 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Spinner from './Spinner.vue'
 import { ago, api, deck } from '../deck'
+async function setHelpCards(on: boolean) {
+  await api('/api/settings', { helpCardsTelegram: on })
+  deck.settings.helpCardsTelegram = on
+}
 
-type Chat = { id: number; title: string; type: string; cwd: string | null; project: string | null }
+type Chat = { id: number; title: string; type: string; cwd: string | null; project: string | null; autoReply?: boolean }
 type Bot = { id: string; username: string; name: string; readsAll: boolean; owner: { id: number; name: string } | null; pairCode: string | null; cwd: string | null; project: string | null; readDirs: string[]; chats: Chat[]; on: boolean; running: boolean; status: { ok: boolean; at: number; error?: string } | null }
 type View = { bots: Bot[]; dir: string }
 
@@ -86,6 +90,12 @@ onUnmounted(() => clearInterval(t))
         <button class="btn btn-ghost btn-sm" @click="change(b, { remove: true })">Remove</button>
       </div>
 
+      <!-- add-on help cards [T1118-19] -->
+      <label class="mt-3 flex items-start gap-2 border-t border-line pt-3" data-tg-addonhelp>
+        <input type="checkbox" class="mt-1" :checked="deck.settings.helpCardsTelegram !== false" @change="setHelpCards(($event.target as HTMLInputElement).checked)" />
+        <span><span class="font-medium">Send add-on help cards here</span><br /><span class="text-[12.5px] text-muted">Off: help cards from the add-on show only in Requests, with the same buttons, and nothing arrives in Telegram.</span></span>
+      </label>
+
       <!-- pairing -->
       <div class="mt-3 border-t border-line pt-3">
         <div v-if="b.owner" class="flex items-center gap-2">
@@ -108,6 +118,9 @@ onUnmounted(() => clearInterval(t))
           <span class="min-w-0 flex-1 truncate">{{ c.title }}</span>
           <input class="input !w-72 !py-1 !text-[12.5px]" list="tg-folders" :value="c.cwd ?? ''" placeholder="no project (ignored)" @change="change(b, { chat: c.id, chatCwd: ($event.target as HTMLInputElement).value }, `c${c.id}`)" />
           <span class="w-28 truncate text-[12px] text-faint">{{ c.project ?? '' }}</span>
+          <label class="flex flex-none items-center gap-1.5 text-[12px] text-muted" title="Post the drafted reply in this group as soon as the research is done, as a reply to the last message. Off: it waits for you to press Send reply." data-tg-autoreply>
+            <input type="checkbox" :checked="!!c.autoReply" :disabled="!c.cwd" @change="change(b, { chat: c.id, autoReply: ($event.target as HTMLInputElement).checked })" /> Auto reply
+          </label>
           <button class="btn btn-ghost btn-sm" title="Forget this group (it comes back if the bot sees a message there)" @click="change(b, { chat: c.id, forget: true })">Forget</button>
         </div>
         <div v-if="!groups(b).length" class="mt-1 text-faint">No groups yet.</div>

@@ -28,15 +28,39 @@ const busy = ref('')
 const msg = ref('')
 const show = ref<'open' | 'all'>('open')
 
+// Telegram messages on their way to a report: gathering, queued or researching [T1118-10]
+type Researching = { key: string; chat: string; project: string; from: string[]; text: string; at: number; state: 'gathering' | 'queued' | 'researching' | 'failed'; error?: string; steps: { at: number; text: string }[]; msgs: { from: string; at: number; text: string }[]; since: number }
+// the in-flight card open on the right (its messages, while the run works)
+const flight = computed(() => (pick.value.startsWith('rf:') ? inFlight.value.find((f) => f.key === pick.value.slice(3)) ?? null : null))
+const inFlight = ref<Researching[]>([])
+const stateText = { gathering: 'Waiting for more messages', queued: 'Queued', researching: 'Researching…', failed: 'Failed' }
+const stateClass = (st: Researching['state']) => (st === 'researching' ? 'text-[var(--color-st-busy)]' : st === 'failed' ? 'text-[var(--color-danger)]' : 'text-muted')
+async function failedAct(key: string, act: 'retry' | 'dismiss') {
+  busy.value = act
+  try {
+    await api('/api/requests/act', { failed: key, act })
+    await load()
+  } catch (e: any) {
+    msg.value = e.message
+  } finally {
+    busy.value = ''
+  }
+}
 async function load() {
-  const r = await api<{ requests: Row[]; help?: Help[] }>('/api/requests')
+  const r = await api<{ requests: Row[]; help?: Help[]; researching?: Researching[] }>('/api/requests')
+  const had = inFlight.value.length
+  inFlight.value = r.researching ?? []
+  // poll faster while something is in flight, so its report shows up soon after it lands
+  if (!!had !== !!inFlight.value.length) restartPoll()
   rows.value = r.requests
   helps.value = r.help ?? []
   if (help.value) help.value = helps.value.find((h) => h.id === help.value!.id) ?? help.value
   if (!pick.value && list.value[0]) pick.value = list.value[0].pick
 }
 const items = computed((): Item[] => [...(rows.value ?? []).map((r) => ({ type: 'tg' as const, pick: `tg:${r.rid}`, at: r.at, r })), ...helps.value.map((h) => ({ type: 'help' as const, pick: `help:${h.id}`, at: h.at, h }))].sort((a, b) => b.at - a.at))
-const list = computed(() => items.value.filter((x) => show.value === 'all' || !(x.type === 'tg' ? x.r.done.length : x.h.done.length || x.h.closed)))
+// a reply alone keeps a bug or feature open: it still waits on a task, a session or Skip (src/telegram.ts isOpen) [T1118-18]
+const tgOpen = (r: Row) => !r.done.some((d) => d !== 'send') && (!r.done.includes('send') || r.kind === 'bug' || r.kind === 'feature')
+const list = computed(() => items.value.filter((x) => show.value === 'all' || !(x.type === 'tg' ? !tgOpen(x.r) : x.h.done.length || x.h.closed)))
 watch(pick, async (p) => {
   msg.value = ''
   helpText.value = ''
@@ -45,7 +69,7 @@ watch(pick, async (p) => {
   one.value = rid ? await api<Full>(`/api/requests?rid=${encodeURIComponent(rid)}`).catch(() => null) : null
   draft.value = one.value?.v.reply ?? ''
 })
-async function helpAct(what: 'task' | 'start' | 'reply' | 'wontfix') {
+async function helpAct(what: 'task' | 'start' | 'reply' | 'wontfix' | 'close') {
   if (!help.value) return
   busy.value = what
   msg.value = ''
@@ -97,9 +121,13 @@ const stateOf = (r: Row) => (r.done.includes('skip') ? 'Skipped' : r.done.includ
 const sessionKey = computed(() => one.value?.session && deck.sessions.find((s) => s.tmux === one.value!.session)?.key)
 
 let t: ReturnType<typeof setInterval> | undefined
+function restartPoll() {
+  clearInterval(t)
+  t = setInterval(() => void load().catch(() => {}), inFlight.value.length ? 3000 : 10_000)
+}
 onMounted(() => {
   void load()
-  t = setInterval(() => void load().catch(() => {}), 10_000)
+  restartPoll()
 })
 onUnmounted(() => clearInterval(t))
 </script>
@@ -116,10 +144,20 @@ onUnmounted(() => clearInterval(t))
         </div>
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto">
-        <div v-if="rows && !list.length" class="px-4 py-6 text-[13px] text-faint">
+        <div v-if="rows && !list.length && !inFlight.length" class="px-4 py-6 text-[13px] text-faint">
           <Inbox :size="18" class="mb-2" />
           {{ show === 'open' ? 'Nothing open.' : 'No requests yet.' }} When a customer writes in a linked Telegram group, the research and plan show up here; so do the add-on's help cards.
         </div>
+        <button v-for="f in inFlight" :key="f.key" class="block w-full border-b border-line px-4 py-2.5 text-left hover:bg-[var(--color-row-hover)]" :class="pick === 'rf:' + f.key ? 'bg-[var(--color-row-sel)]' : ''" data-researching @click="pick = 'rf:' + f.key">
+          <div class="flex items-center gap-2 text-[11.5px]">
+            <Spinner v-if="f.state === 'researching'" :size="12" class="flex-none" />
+            <span class="font-medium" :class="stateClass(f.state)">{{ stateText[f.state] }}</span>
+            <span class="text-faint">{{ f.project || f.chat }}</span>
+            <span class="ml-auto text-faint">{{ ago(f.at) }}</span>
+          </div>
+          <div class="mt-1 line-clamp-2 text-[13px] text-ink-soft">{{ f.text }}</div>
+          <div class="mt-1 text-[11.5px] text-faint">{{ f.from.join(', ') }} · {{ f.chat }}</div>
+        </button>
         <template v-for="x in list" :key="x.pick">
         <button v-if="x.type === 'help'" class="block w-full border-b border-line px-4 py-2.5 text-left hover:bg-[var(--color-row-hover)]" :class="pick === x.pick ? 'bg-[var(--color-row-sel)]' : ''" :data-help="x.h.id" @click="pick = x.pick">
           <div class="flex items-center gap-2 text-[11.5px]">
@@ -155,7 +193,39 @@ onUnmounted(() => clearInterval(t))
 
     <!-- one request -->
     <div class="min-h-0 flex-1 overflow-y-auto">
-      <div v-if="one" class="mx-auto max-w-3xl px-6 py-6 text-[13.5px] leading-relaxed" data-request-detail>
+      <div v-if="flight" class="mx-auto max-w-3xl px-6 py-6 text-[13.5px] leading-relaxed" data-flight-detail>
+        <div class="flex items-center gap-2 text-[12px] text-muted">
+          <Spinner v-if="flight.state === 'researching'" :size="13" />
+          <span class="font-medium" :class="stateClass(flight.state)">{{ stateText[flight.state] }}</span>
+          <span>· {{ flight.project || flight.chat }} · {{ flight.chat }} · since {{ ago(flight.since) }}</span>
+        </div>
+        <div v-if="flight.state === 'failed'" class="mt-3 rounded-lg border border-line px-3 py-2.5" data-flight-failed>
+          <p class="text-[13px] text-[var(--color-danger)]">{{ flight.error }}</p>
+          <div class="mt-2.5 flex items-center gap-2">
+            <button class="btn btn-soft btn-sm" :disabled="!!busy" data-flight-retry @click="failedAct(flight.key, 'retry')"><Spinner v-if="busy === 'retry'" /> Retry</button>
+            <button class="btn btn-ghost btn-sm" :disabled="!!busy" @click="failedAct(flight.key, 'dismiss')">Dismiss</button>
+            <span class="text-[12px] text-faint">Retry runs the research again on whichever account has room.</span>
+          </div>
+          <p v-if="msg" class="mt-2 text-[12.5px] text-muted">{{ msg }}</p>
+        </div>
+        <p v-else class="mt-2 text-[12.5px] text-faint">{{ flight.state === 'gathering' ? 'The research starts after a minute with no new message, so a message sent in parts is read whole.' : flight.state === 'queued' ? 'Other research runs are going; this one starts when one finishes.' : 'A read-only research run is reading the project. The report replaces this card, and the bot sends it to you in Telegram too.' }}</p>
+        <section v-if="flight.steps.length" class="mt-5" data-flight-steps>
+          <div class="col-label mb-2">What the research has done ({{ flight.steps.length }})</div>
+          <div class="card max-h-[40vh] overflow-y-auto px-4 py-2.5 font-mono text-[12px] leading-relaxed text-muted">
+            <div v-for="(st, i) in flight.steps" :key="i" class="flex gap-3"><span class="flex-none tabular-nums text-faint">{{ new Date(st.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }}</span><span class="min-w-0 break-words">{{ st.text }}</span></div>
+          </div>
+        </section>
+        <section class="mt-5">
+          <div class="col-label mb-2">Messages ({{ flight.msgs.length }})</div>
+          <div class="card divide-y divide-[var(--color-line)]">
+            <div v-for="(m, i) in flight.msgs" :key="i" class="px-4 py-2.5">
+              <div class="text-[11.5px] text-faint">{{ m.from }} · {{ ago(m.at) }}</div>
+              <div class="mt-1 whitespace-pre-wrap text-[13px] text-ink-soft">{{ m.text }}</div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div v-else-if="one" class="mx-auto max-w-3xl px-6 py-6 text-[13.5px] leading-relaxed" data-request-detail>
         <div class="flex flex-wrap items-center gap-2 text-[12px] text-muted">
           <span class="rounded bg-canvas-2 px-1.5 py-0.5">{{ one.project }}</span>
           <span>{{ one.chat }}</span>
@@ -277,7 +347,8 @@ onUnmounted(() => clearInterval(t))
           <div class="mt-2 flex items-center gap-2">
             <button class="btn btn-soft btn-sm" :disabled="!helpText.trim() || !!busy" @click="helpAct('reply')"><Spinner v-if="busy === 'reply'" /> Reply</button>
             <button class="btn btn-ghost btn-sm" :disabled="!helpText.trim() || !!busy" @click="helpAct('wontfix')"><Spinner v-if="busy === 'wontfix'" /> Won't fix</button>
-            <span class="text-[12px] text-faint">Won't fix closes the card with this text as the reason.</span>
+            <button class="btn btn-ghost btn-sm" :disabled="!!busy" title="Take it off the open list; nothing is sent" data-help-close @click="helpAct('close')"><Spinner v-if="busy === 'close'" /> Close</button>
+            <span class="text-[12px] text-faint">Reply and Won't fix send this text to {{ help.employee.name }} in their DM (Won't fix as the reason, and closes the card). Close only closes it here.</span>
           </div>
         </section>
       </div>

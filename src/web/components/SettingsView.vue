@@ -209,6 +209,12 @@ const folders = computed(() => {
   }
   return [...seen.values()].sort((a, b) => a.group.localeCompare(b.group) || a.cwd.localeCompare(b.cwd))
 })
+// a filter over the per-folder tables (project or folder; every word must match) [T1118-17]
+const folderQ = ref('')
+const shownFolders = computed(() => {
+  const words = folderQ.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  return words.length ? folders.value.filter((f) => words.every((w) => `${f.group} ${f.cwd}`.toLowerCase().includes(w))) : folders.value
+})
 const ruleOf = (cwd: string, tool: AccountTool = 'claude') => rulesFor(tool).projects[cwd.replace(/^~/, deck.homeAbs)] ?? ''
 // the sidebar's project order: every project the deck knows, in the saved order
 const order = computed(() => orderProjects([...(deck.settings.projectOrder ?? []), ...deck.sessions.map(projectOf)]))
@@ -350,8 +356,8 @@ const deckSessions = computed(() => deck.sessions.filter((s) => s.where === 'dec
           </div>
 
           <div class="card mt-3 overflow-hidden">
-            <div class="flex border-b border-line px-4 py-2.5"><span class="col-label flex-1">Per project folder</span><span class="col-label w-16 text-center">Chrome</span><span class="col-label w-40 pl-1">Claude account</span><span class="col-label w-40 pl-1">Codex account</span></div>
-            <div v-for="f in folders" :key="f.cwd" class="flex items-center gap-3 border-b border-line px-4 py-2 last:border-0">
+            <div class="flex items-center gap-3 border-b border-line px-4 py-2.5"><span class="col-label">Per project folder</span><input v-model="folderQ" class="input !w-56 !py-1 !text-[12.5px]" placeholder="Filter projects or folders" data-folder-filter /><span class="flex-1"></span><span class="col-label w-16 text-center">Chrome</span><span class="col-label w-40 pl-1">Claude account</span><span class="col-label w-40 pl-1">Codex account</span></div>
+            <div v-for="f in shownFolders" :key="f.cwd" class="flex items-center gap-3 border-b border-line px-4 py-2 last:border-0">
               <span class="w-36 truncate text-[12px] font-semibold uppercase tracking-wide text-faint">{{ f.group }}</span>
               <span class="pill-mono min-w-0 flex-1 truncate">{{ shortCwd(f.cwd) }}</span>
               <span class="flex w-16 justify-center"><input type="checkbox" :checked="chromeOf(f.cwd)" title="Sessions here use Claude in Chrome" @change="setChromeProject(f.cwd, ($event.target as HTMLInputElement).checked)" /></span>
@@ -410,8 +416,8 @@ const deckSessions = computed(() => deck.sessions.filter((s) => s.where === 'dec
             </label>
           </div>
           <div v-if="folders.length" class="card mt-3 overflow-hidden">
-            <div class="flex border-b border-line px-4 py-2.5"><span class="col-label flex-1">Per project folder</span><span class="col-label w-40 pl-1">Mode</span></div>
-            <div v-for="f in folders" :key="f.cwd" class="flex items-center gap-3 border-b border-line px-4 py-2 last:border-0">
+            <div class="flex items-center gap-3 border-b border-line px-4 py-2.5"><span class="col-label">Per project folder</span><input v-model="folderQ" class="input !w-56 !py-1 !text-[12.5px]" placeholder="Filter projects or folders" data-folder-filter /><span class="flex-1"></span><span class="col-label w-40 pl-1">Mode</span></div>
+            <div v-for="f in shownFolders" :key="f.cwd" class="flex items-center gap-3 border-b border-line px-4 py-2 last:border-0">
               <span class="w-36 truncate text-[12px] font-semibold uppercase tracking-wide text-faint">{{ f.group }}</span>
               <span class="pill-mono min-w-0 flex-1 truncate">{{ shortCwd(f.cwd) }}</span>
               <select class="input !w-40 !py-1 !text-[13px]" :value="modeOfFolder(f.cwd)" @change="setModeProject(f.cwd, ($event.target as HTMLSelectElement).value)">
