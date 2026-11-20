@@ -64,6 +64,8 @@ export class Acc {
   overhead: number | null = null
   prevIn = 0
   lastIn = 0
+  /** the overhead measured before the last compact: an estimate until the next request measures it again */
+  overheadGuess = 0
   requests = 0
   compactedAt: number | null = null
   lastAt: number | null = null
@@ -106,15 +108,20 @@ export class Acc {
     this.seg = keep ? this.seg.filter((i) => i.uuid && keep.has(i.uuid)) : []
     for (const i of this.seg) i.tok = 0
     this.pend = [...this.seg]
+    // the request size before the compact no longer counts: until the next request, the total is the kept parts
+    // plus the overhead as last measured (it read 543k of 500k with 78k of parts before) [T1120-13]
+    if (this.overhead !== null) this.overheadGuess = this.overhead
     this.overhead = null
     this.prevIn = 0
+    this.lastIn = 0
     this.compactedAt = at
   }
 
   report(tool: 'claude' | 'codex', window: number | null, windowNote: string | null, model: string | null): ContextReport {
     const pendSum = this.pend.reduce((a, i) => a + i.est, 0)
     for (const i of this.pend) i.tok = i.est
-    const total = this.lastIn + pendSum
+    const guess = this.lastIn === 0 && this.overhead === null ? this.overheadGuess : 0
+    const total = this.lastIn + pendSum + guess
     // scale what came before the newest request so overhead + parts = its exact input
     const before = this.seg.filter((i) => !this.pend.includes(i))
     const got = before.reduce((a, i) => a + i.tok, 0)
@@ -131,7 +138,7 @@ export class Acc {
       c.tokens += n
       if (sub) c.parts.set(sub, (c.parts.get(sub) ?? 0) + n)
     }
-    const base = this.overhead ?? 0
+    const base = this.overhead ?? guess
     if (this.shape && this.shape.system + this.shape.tools > 0) {
       const sys = Math.round((base * this.shape.system) / (this.shape.system + this.shape.tools))
       bump('overhead', 'System prompt', sys)

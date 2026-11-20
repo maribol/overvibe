@@ -131,7 +131,8 @@ export async function startSession(o: { cwd: string; account: string; name?: str
   const cwd = checkCwd(o.cwd)
   ensureAccount(o.account)
   const mode = modeOf({ ...o, cwd })
-  const name = (o.name?.trim() || cwd.split('/').pop() || 'session').slice(0, 60)
+  // as long as a rename allows (80), so a revived session keeps its whole name [T1120-10]
+  const name = (o.name?.trim() || cwd.split('/').pop() || 'session').slice(0, 80)
   const sessionId = o.resume && !o.fork ? o.resume : crypto.randomUUID()
   // a name the owner typed goes in at launch; otherwise the deck names it later from Claude's own title
   // ask = Claude Code's "manual" mode (its normal approval prompts), passed explicitly so a defaultMode in the
@@ -237,7 +238,7 @@ async function startOther(tool: Tool, o: { cwd: string; account?: string; name?:
     // no `-i <prompt>`: agy drops it when --remote-control is on (it runs /remote-control as the first
     // input instead), so the prompt is typed in once its input box is up
   }
-  const name = (o.name?.trim() || `${tool}: ${cwd.split('/').pop()}`).slice(0, 60)
+  const name = (o.name?.trim() || `${tool}: ${cwd.split('/').pop()}`).slice(0, 80)
   const rec: DeckRecord = { tmux: o.tmux ?? shortId(), sessionId: o.resume ?? '', cwd, account, name, createdAt: Date.now(), kind: 'claude', tool, named: !!o.name?.trim(), ...oldLinks(o), ...(o.worktree ? { worktree: o.worktree } : {}), ...(mode === 'ask' ? { mode } : {}) }
   await newSession(rec.tmux, cwd, argv, { ...(tool === 'codex' ? envFor(account, 'codex') : {}), ...identity(rec) })
   void forgetEnv(rec.tmux, 'OVERVIBE_PROOF')
@@ -372,6 +373,7 @@ export async function stopFor(o: { session?: string; children?: boolean; from: s
     // an attached child that already exited can still be closed (hidden) by its parent
     const endedKids = rows.filter((s) => !s.tmux && caller && s.attached && getRecord(s.key) && startedBy(getRecord(s.key)!, caller))
     const exact = rows.filter((s) => s.key === want || (s.sessionId && s.sessionId === want))
+    if (!exact.length) { const id = byConversationId(rows, want); if (id) exact.push(id) }
     const hits = exact.length ? exact : running.filter(title).length ? running.filter(title) : endedKids.filter(title)
     if (hits.length > 1) throw new Error(`"${want}" matches ${hits.length} sessions; use its tmux id from overvibe ls --json`)
     const r = hits[0] && getRecord(hits[0].key)
@@ -591,15 +593,23 @@ export function reviveSession(tmux: string, o: { account?: string; prompt?: stri
   if (going) return going
   const p = (async () => {
     const r = getRecord(tmux)
-    if (!r?.suspended) throw new Error('that session is not suspended')
+    if (!r) throw new Error('unknown session')
+    // revived already (a queued message, another tab) while the page still showed it suspended: just open it [T1120-15]
+    if (!r.suspended) {
+      if ((await listSessions()).some((x) => x.name === tmux)) return r
+      throw new Error('that session is not suspended')
+    }
     if ((await listSessions()).some((x) => x.name === tmux)) {
       r.suspended = undefined
       save()
       return r
     }
     const keep = { parent: r.parent, parentId: r.parentId, attached: r.attached, ...(o.links?.parent || o.links?.parentId ? o.links : {}), named: r.named, autoNamed: r.autoNamed, pastIds: r.pastIds }
-    const next = await startSession({ tool: r.tool ?? 'claude', cwd: r.cwd, account: o.account || r.account, name: r.name, prompt: o.prompt, resume: r.sessionId, tmux, worktree: r.worktree, mode: o.mode ?? r.mode ?? 'auto' })
+    // only a name the owner gave goes back in (-n); otherwise Claude Code keeps the conversation's own title, and the
+    // row its name [T1120-10]
+    const next = await startSession({ tool: r.tool ?? 'claude', cwd: r.cwd, account: o.account || r.account, name: r.named ? r.name : undefined, prompt: o.prompt, resume: r.sessionId, tmux, worktree: r.worktree, mode: o.mode ?? r.mode ?? 'auto' })
     for (const [k, v] of Object.entries(keep)) if (v !== undefined) (next as any)[k] = v
+    next.name = r.name
     save()
     console.log(`[suspend] revived "${r.name}" (${tmux})`)
     return next
@@ -773,6 +783,7 @@ async function deckRowFor(want0: string) {
   const all = (await view()).sessions
   const rows = all.filter((s) => s.where === 'deck' && (s.tmux || s.suspended))
   const exact = rows.filter((s) => s.key === want || (s.sessionId && s.sessionId === want))
+  if (!exact.length) { const id = byConversationId(rows, want); if (id) exact.push(id) }
   const named = rows.filter((s) => s.title.toLowerCase() === want.toLowerCase())
   const part = rows.filter((s) => s.title.toLowerCase().includes(want.toLowerCase()))
   const hits = exact.length ? exact : named.length ? named : part
@@ -1501,19 +1512,29 @@ export async function startShell(cwd0: string, cmd?: string, name0?: string, by?
  */
 // ---------- deck open: an agent brings a session up on the owner's screen ----------
 
-let focus: { key: string; title: string; from: string; at: number } | null = null
+let focus: { key: string; title: string; from: string; at: number; why?: string } | null = null
 export const getFocus = () => focus
 /** Resolve a session by tmux id, session id, or name (as deck send does, plus sessions outside the deck) and ask the page to open it. */
-export async function focusOn(to: string, from: string) {
+/** A Claude, Codex or agy session id as the tool shows it: the whole id, or its start (6+ hex characters) when only
+ * one session's id starts that way [T1120-11]. */
+export function byConversationId<T extends { sessionId: string | null }>(rows: T[], want: string): T | undefined {
+  const w = want.trim().toLowerCase()
+  if (!w) return undefined
+  const exact = rows.find((s) => s.sessionId?.toLowerCase() === w)
+  if (exact || !/^[0-9a-f-]{6,}$/.test(w)) return exact
+  const starts = rows.filter((s) => s.sessionId?.toLowerCase().startsWith(w))
+  return starts.length === 1 ? starts[0] : undefined
+}
+export async function focusOn(to: string, from: string, why?: string) {
   const { sessions } = await view()
   const want = to.trim().toLowerCase()
   const live = sessions.filter((s) => (s.where === 'deck' && s.tmux) || s.where === 'terminal' || s.where === 'background')
-  const exact = sessions.find((s) => s.tmux === to || s.sessionId === to || s.key === to)
+  const exact = sessions.find((s) => s.tmux === to || s.sessionId === to || s.key === to) ?? byConversationId(live, to)
   const hit = exact ?? live.find((s) => s.title.toLowerCase() === want) ?? live.filter((s) => s.title.toLowerCase().includes(want)).sort((a, b) => b.last - a.last)[0]
   if (!hit) throw new Error(`No running session called "${to}". Run: overvibe ls`)
   const sender = getRecord(from)
   const fromName = sender ? (sessions.find((s) => s.tmux === from)?.title ?? sender.name) : from || 'An agent'
-  focus = { key: hit.key, title: hit.title, from: fromName, at: Date.now() }
+  focus = { key: hit.key, title: hit.title, from: fromName, at: Date.now(), ...(why?.trim() ? { why: why.trim().slice(0, 300) } : {}) }
   return { key: hit.key, title: hit.title }
 }
 
@@ -1524,7 +1545,7 @@ export async function sendTo(to: string, text: string, from: string, checked: Se
   const live = sessions.filter((s) => s.where === 'deck' && (s.tmux || s.suspended))
   // a part of a name prefers an agent over a terminal with a similar name [T1111-16]
   const partial = live.filter((s) => s.title.toLowerCase().includes(want)).sort((a, b) => Number(!!notAgent(a.kind, '')) - Number(!!notAgent(b.kind, '')) || b.last - a.last)
-  const hit = live.find((s) => s.tmux === to || s.sessionId === to) ?? live.find((s) => s.title.toLowerCase() === want) ?? partial[0]
+  const hit = live.find((s) => s.tmux === to || s.sessionId === to) ?? byConversationId(live, to) ?? live.find((s) => s.title.toLowerCase() === want) ?? partial[0]
   if (!hit) {
     const outside = sessions.find((s) => (s.where === 'terminal' || s.where === 'background') && s.title.toLowerCase().includes(want))
     throw new Error(outside ? `"${outside.title}" runs outside Overvibe (a Terminal tab); move it into Overvibe first, or use SendMessage from a Claude session.` : `No Overvibe session called "${to}". Run: overvibe ls`)

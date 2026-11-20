@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 process.env.OVERVIBE_DATA_DIR = mkdtempSync(join(tmpdir(), 'ov-context-'))
-const { ClaudeReader, CodexReader, readInto, claudeWindow, bodyOf, toolLabel } = await import('./context')
+const { Acc, ClaudeReader, CodexReader, readInto, claudeWindow, bodyOf, toolLabel } = await import('./context')
 
 // entry shapes as Claude Code 2.1 writes them (trimmed to the fields the reader looks at)
 const T = (s: number) => new Date(Date.UTC(2026, 10, 12, 9, 0, s)).toISOString()
@@ -197,5 +197,13 @@ describe('helpers [T1112-107]', () => {
   test('labels', () => {
     expect(toolLabel('Bash', { command: 'ls', description: 'List files' })).toBe('Bash List files')
     expect(bodyOf('Another Claude session sent a message:\n<agent-message from="a">\nhello\n</agent-message>').trim()).toBe('hello')
+  })
+  test('after a compact the old request size is dropped until the next request [T1120-13]', () => {
+    const a = new Acc()
+    a.add({ cat: 'you', label: 'm', at: 1, est: 1000 })
+    a.request(400_000)
+    a.compact(2)
+    a.add({ cat: 'summary', label: 's', at: 3, est: 5000 })
+    expect(a.report('claude', 500_000, null, null).total).toBe(399_000 + 5000)
   })
 })

@@ -147,7 +147,8 @@ ov is the short form of overvibe where it is installed.
       continues that same conversation as a live session in its folder, with its name and its sidebar row
       (Claude, Codex, agy); a stopped attached child comes back under its parent. --prompt is typed once it is up;
       --attach makes it a child of this session; --fork starts a copy instead (Claude only; also works on a running one)
-  overvibe open ["<session name>"]      open a session on the owner's screen in Overvibe (default: this one), e.g. when they must answer there
+  overvibe open ["<session name>"] --why "<reason>"   open a session on the owner's screen in Overvibe (default: this one),
+      e.g. when they must answer there; the reason shows on a card they acknowledge (required from a session)
   overvibe stop "<session name>"        stop a session (its conversation is kept); an attached child is also hidden from the list
   overvibe stop --children              close every attached child of this session, and stop the terminals it started
       from inside a session, overvibe stop only reaches itself and the sessions and terminals it started; the owner (plain shell) can stop any
@@ -175,6 +176,9 @@ ov is the short form of overvibe where it is installed.
   overvibe read <id>   one message sent to this session, whole: a long one arrives as its start plus this command
   overvibe attach "<session name>" [--print]   open a running session in this terminal (tmux attach); Ctrl-b d detaches and leaves it running
       --print: only show the tmux command it would run
+  overvibe attach "<session>" --to me|"<parent>"   nest a RUNNING session under you (or another parent) in the sidebar; it keeps running
+                                     (never stop + resume --attach to do this). Without --to, attach is the tmux one above.
+  overvibe detach "<session>"         take it out from under its parent; it keeps running, on its own row
   overvibe skills [ls [--json] | sync | add <folder> [--tools claude,codex,agy] [--project <folder>]... | import <claude|codex|agy> <name> [--replace]
                   | on <name> | off <name> | remove <name> [--purge --yes] | alias <name> <old-name>]
       one skills library (~/.config/overvibe/skills, plus the ones Overvibe ships) linked into Claude Code, Codex and agy;
@@ -385,9 +389,12 @@ try {
       if (live.length) console.error('\nsee what one is doing: overvibe peek "<name>"; ask it: overvibe send "<name>" "<message>" (never tmux directly)')
     }
   } else if (cmd === 'open') {
-    const name = rest.join(' ').trim() || SELF
+    // the owner sees why they were brought there [T1120-9]: an agent must say it
+    const why = flag('why')
+    const name = rest.filter((a, i) => a !== '--why' && rest[i - 1] !== '--why').join(' ').trim() || SELF
     if (!name) throw new Error('not inside an Overvibe session (no OVERVIBE_SESSION); say which one: overvibe open "<session name>"')
-    const r = await call('/api/focus', { session: name, from: SELF })
+    if (SELF && !why?.trim()) throw new Error('say why the owner should look: overvibe open "<session name>" --why "<what they need to do there>"')
+    const r = await call('/api/focus', { session: name, from: SELF, why })
     console.log(`opened "${r.title}" in Overvibe`)
   } else if (cmd === 'suspend' || cmd === 'revive') {
     // free a session's memory, its last screen kept in its row; revive resumes it there [T1116-13]
@@ -649,6 +656,7 @@ async function liveSession(name: string) {
   const want = name.toLowerCase()
   const hit =
     live.find((x: any) => x.tmux === name || x.sessionId === name) ??
+    (/^[0-9a-f-]{6,}$/i.test(name) && live.filter((x: any) => x.sessionId?.toLowerCase().startsWith(name.toLowerCase())).length === 1 ? live.find((x: any) => x.sessionId?.toLowerCase().startsWith(name.toLowerCase())) : undefined) ??
     live.find((x: any) => x.title.toLowerCase() === want) ??
     live.filter((x: any) => x.title.toLowerCase().includes(want)).sort((a: any, b: any) => b.last - a.last)[0]
   if (!hit) throw new Error(`no running Overvibe session called "${name}" (overvibe ls lists them; sessions outside Overvibe have no pane)`)

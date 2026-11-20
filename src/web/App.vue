@@ -391,6 +391,11 @@ onUnmounted(() => {
     <FeedbackModal v-if="deck.feedbackOpen" />
     <!-- the setup, set aside for a login terminal or a new account -->
     <button v-if="deck.setupAway && !deck.addAccountOpen" class="btn btn-brand btn-sm fixed bottom-5 right-5 z-[60] shadow-lg" @click="resumeSetup"><Sparkles :size="14" /> Continue setup</button>
+    <div v-if="deck.opened" class="dialog fixed bottom-5 left-1/2 z-[85] w-[min(480px,90vw)] -translate-x-1/2 px-4 py-3 shadow-lg" data-opened-card>
+      <div class="text-[12px] text-faint">{{ deck.opened.from }} opened <span class="font-medium text-ink-soft">{{ deck.opened.title }}</span></div>
+      <div class="mt-1 text-[13.5px] text-ink">{{ deck.opened.why ?? 'It did not say why.' }}</div>
+      <div class="mt-2.5 flex justify-end"><button class="btn btn-primary btn-sm" data-opened-ok @click="deck.opened = null">OK</button></div>
+    </div>
     <div v-if="deck.toast" class="dialog pointer-events-none fixed bottom-5 left-1/2 z-[80] max-w-md -translate-x-1/2 px-4 py-2 text-[13px] shadow-lg">{{ deck.toast }}</div>
   </div>
 </template>

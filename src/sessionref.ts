@@ -18,9 +18,11 @@ export function tildePath(cwd: string, home: string): string {
 /** one line, any script: `the Overvibe session "api: login fix" (Codex, ~/Work/api) ` (trailing space so the
  *  owner can keep typing). Control characters and line breaks in a title become spaces, so a paste never
  *  carries an Enter. */
-export function sessionRef(s: { title: string; tool?: string | null; cwd: string }, home: string): string {
+export function sessionRef(s: { title: string; tool?: string | null; cwd: string; sessionId?: string | null }, home: string): string {
   const flat = (t: string) => t.replace(/[\x00-\x1f\x7f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim()
   const name = flat(s.title).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   const tool = TOOL[s.tool ?? 'claude'] ?? flat(s.tool ?? '')
-  return `the Overvibe session "${name}" (${tool}, ${flat(tildePath(s.cwd, home))}) `
+  // its Claude, Codex or agy id (first 8): every overvibe command takes it, and it stays right after a rename [T1120-12]
+  const id = s.sessionId && /^[0-9a-f-]{8,}$/i.test(s.sessionId) ? `, id ${s.sessionId.slice(0, 8)}` : ''
+  return `the Overvibe session "${name}" (${tool}, ${flat(tildePath(s.cwd, home))}${id}) `
 }

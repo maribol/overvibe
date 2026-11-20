@@ -731,7 +731,7 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (p === '/api/focus') {
     const session = String(body.session ?? '').trim()
     if (!session) return bad('need session')
-    return json(await focusOn(session.slice(0, 200), String(body.from ?? '')))
+    return json(await focusOn(session.slice(0, 200), String(body.from ?? ''), typeof body.why === 'string' ? body.why : undefined))
   }
   // a message waiting for a busy session (`overvibe send`): the owner delivers it now or discards it
   if (p === '/api/send/deliver') return json({ ok: true, ...(await deliverNow(String(body.id ?? ''))) })

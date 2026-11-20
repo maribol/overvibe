@@ -131,6 +131,8 @@ export const deck = reactive({
   menu: null as { x: number; y: number; s: Session } | null, // right-click menu on a session row // the session the rename dialog is for
   pending: [] as Pending[],
   paletteOpen: false,
+  /** an agent brought the owner to a session (overvibe open): who, which and why, until they click OK [T1120-9] */
+  opened: null as { from: string; title: string; why: string | null; at: number } | null,
   /** the text the palette opens with (the sidebar filter's "more in older sessions") [T1119-28] */
   paletteQuery: '',
   toast: null as string | null,
@@ -265,7 +267,7 @@ export async function refresh() {
 
 // `deck open`: an agent asks the page to show a session. Only requests made after this page loaded
 // count, and none while a dialog is open (it is applied on the first refresh after it closes).
-type Focus = { key: string; title: string; from: string; at: number }
+type Focus = { key: string; title: string; from: string; at: number; why?: string }
 let focusSeen: number | null = null
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 export const dialogOpen = () => !!(deck.newOpen || deck.paletteOpen || deck.renameFor || deck.moveFor || deck.attachFor || deck.menu || deck.addAccountOpen || deck.stopFor || deck.setupOpen || deck.followupOpen || deck.compactOpen || deck.feedbackOpen || deck.projectMenu || deck.closeAllFor)
@@ -277,7 +279,13 @@ function applyFocus(f: Focus | null) {
   if (!f || f.at <= focusSeen || dialogOpen() || Date.now() - lastKeyAt < 2500) return
   focusSeen = f.at
   select(f.key)
-  showToast(`${f.from} opened ${f.title}`)
+  // a card that stays until the owner clicks OK, and a system notification when Overvibe is not in front [T1120-9]
+  deck.opened = { from: f.from, title: f.title, why: f.why ?? null, at: f.at }
+  if (!document.hasFocus() && 'Notification' in window) {
+    const show = () => new Notification(`${f.from} opened ${f.title}`, { body: f.why ?? 'Open Overvibe to see it.', silent: false })
+    if (Notification.permission === 'granted') show()
+    else if (Notification.permission === 'default') void Notification.requestPermission().then((p) => p === 'granted' && show())
+  }
 }
 export function showToast(text: string) {
   deck.toast = text

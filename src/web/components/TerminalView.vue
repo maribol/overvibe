@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vTip, type TipBody } from '../tip'
 // One real terminal: xterm.js on a WebSocket to `tmux attach` on the deck's tmux server.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal, type IBufferCell } from '@xterm/xterm'
@@ -806,9 +807,14 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', shutEsc, true)
 })
 const canMove = computed(() => !!props.s.sessionId && props.s.kind === 'claude' && !props.s.hand)
-const moveTitle = 'Move to another folder (started in the wrong one?)'
-const resumeTitle = 'Copy a command that resumes this session in any terminal'
+// header buttons: an instant tooltip saying what each does [T1120-14]
+const moveTitle = 'Move to another folder'
+const moveTip: TipBody = { title: moveTitle, foot: 'Started in the wrong folder? It keeps the same conversation.' }
+const resumeTitle = 'Copy the resume command'
+const resumeTip: TipBody = { title: resumeTitle, foot: 'A command that resumes this conversation in any terminal.' }
 const stopTitle = computed(() => `Stop (asks first; the conversation is kept). ${alt('W')} stops and closes it`)
+const stopTip = computed<TipBody>(() => ({ title: 'Stop this session', foot: `Asks first; the conversation is kept. ${alt('W')} stops and closes it.` }))
+const moreTip: TipBody = { title: 'More', foot: 'Move to another folder, copy the resume command, suspend.' }
 const autoTitle = computed(() =>
   props.s.mode === 'ask' ? 'Auto mode off (ask mode): the tool asks before commands and edits; the session turns yellow until you answer' : 'Auto mode on: the tool runs commands and edits without asking, with its own safety checks')
 </script>
@@ -862,18 +868,18 @@ const autoTitle = computed(() =>
       </div>
       <button v-if="ended" class="btn btn-soft btn-sm flex-none" title="Reconnecting on its own; click to try now" @click="(tries = 0), connect()">{{ narrow ? 'Reconnect' : 'Reconnecting…' }}</button>
       <template v-if="!narrow">
-        <button v-if="canMove" class="btn btn-ghost btn-sm flex-none !px-2" data-move :title="moveTitle" :aria-label="moveTitle" @click="deck.moveFor = s"><FolderInput :size="14" /></button>
-        <button v-if="s.sessionId" class="btn btn-ghost btn-sm flex-none !px-2" data-resume :title="resumeTitle" :aria-label="resumeTitle" @click="copy(resumeCmd())"><Copy :size="14" /></button>
+        <button v-if="canMove" class="btn btn-ghost btn-sm flex-none !px-2" data-move v-tip="moveTip" :aria-label="moveTitle" @click="deck.moveFor = s"><FolderInput :size="14" /></button>
+        <button v-if="s.sessionId" class="btn btn-ghost btn-sm flex-none !px-2" data-resume v-tip="resumeTip" :aria-label="resumeTitle" @click="copy(resumeCmd())"><Copy :size="14" /></button>
       </template>
       <div v-else-if="canMove || s.sessionId" class="relative flex-none" data-more-menu>
-        <button class="btn btn-ghost btn-sm !px-2" data-more title="More: move to another folder, copy the resume command" aria-label="More" @click="moreOpen = !moreOpen"><Ellipsis :size="14" /></button>
+        <button class="btn btn-ghost btn-sm !px-2" data-more v-tip="moreTip" aria-label="More" @click="moreOpen = !moreOpen"><Ellipsis :size="14" /></button>
         <div v-if="moreOpen" class="absolute right-0 top-full z-30 mt-1.5 min-w-[220px] rounded-lg border border-line bg-surface py-1 text-[12.5px] text-ink shadow-lg">
           <button v-if="canMove" class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-canvas-2" @click="(moreOpen = false), (deck.moveFor = s)"><FolderInput :size="13" /> Move to another folder…</button>
           <button v-if="s.sessionId" class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-canvas-2" @click="(moreOpen = false), copy(resumeCmd())"><Copy :size="13" /> Copy resume command</button>
           <button v-if="canSuspend" class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-canvas-2" data-suspend title="Stops it to free its memory; its last screen stays here and Revive resumes the same conversation" @click="suspendIt"><CirclePause :size="13" /> Suspend to free memory</button>
         </div>
       </div>
-      <button class="btn btn-ghost btn-sm flex-none !px-2 hover:!border-[var(--color-danger)] hover:!text-[var(--color-danger)]" data-stop :title="stopTitle" aria-label="Stop" @click="stop"><Square :size="13" /></button>
+      <button class="btn btn-ghost btn-sm flex-none !px-2 hover:!border-[var(--color-danger)] hover:!text-[var(--color-danger)]" data-stop v-tip="stopTip" :aria-label="stopTitle" @click="stop"><Square :size="13" /></button>
     </div>
     <!-- a session that looks done: close it in one click [T1112-6] -->
     <div v-if="s.tidy && !tidyLater.has(s.key)" class="flex flex-none items-center gap-3 border-b border-line bg-canvas-2 px-4 py-1.5 text-[12.5px] text-muted">
