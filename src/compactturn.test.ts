@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { applyLineForTest, meta, opensTurn } from './transcripts'
 
-// [T1119-8] a desk employee's session (Paul, 2026-11-19) read busy for good: its turn ended, the desk typed /compact,
+// [T1119-8] an AI employee's session (2026-11-19) read busy for good: its turn ended, the desk typed /compact,
 // and the compaction's own user lines reopened the turn with no turn_duration after them; a background shell kept
 // `claude agents` on "busy", so isBusy stayed true and the session's queued words were never typed.
 const at = (s: number) => new Date(Date.UTC(2026, 10, 19, 7, 52, 0) + s * 1000).toISOString()

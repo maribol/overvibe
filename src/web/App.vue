@@ -265,7 +265,7 @@ watch(tasksOn, (on) => {
 
 let timer: ReturnType<typeof setInterval>
 // an add-on's help cards are read every minute and when this window gets focus (the server throttles it)
-const addonFocus = () => void (deck.requests ? api('/api/addon/poll', {}).catch(() => {}) : undefined)
+const cardsFocus = () => void (deck.requests ? api('/api/cards/poll', {}).catch(() => {}) : undefined)
 onMounted(() => {
   // a link to a session or view wins over the one remembered from last time
   if (location.hash.length > 2) applyUrl()
@@ -276,14 +276,14 @@ onMounted(() => {
   checkFirstRun() // the first-run setup, once per install [T1110-67]
   window.addEventListener('keydown', onKey, true)
   window.addEventListener('mousedown', remember, true)
-  window.addEventListener('focus', addonFocus)
+  window.addEventListener('focus', cardsFocus)
   window.deckDesktop?.on(runCommand)
 })
 onUnmounted(() => {
   clearInterval(timer)
   window.removeEventListener('keydown', onKey, true)
   window.removeEventListener('mousedown', remember, true)
-  window.removeEventListener('focus', addonFocus)
+  window.removeEventListener('focus', cardsFocus)
 })
 </script>
 

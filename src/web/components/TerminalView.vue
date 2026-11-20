@@ -16,7 +16,7 @@ import type { UserLink } from '../../linkuser'
 import { tasksFocus, tasksOn } from '../tasks'
 import { midPath } from '../midPath'
 import { alt } from '../keys'
-import { ago, api, closeRow, suspendSession, setView, stopSession, STATUS, pillOf, accountsFor, askStop, copy, deck, draggedSession, switchSessionAccount, type Session } from '../deck'
+import { ago, api, closeRow, startShell, suspendSession, setView, stopSession, STATUS, pillOf, accountsFor, askStop, copy, deck, draggedSession, switchSessionAccount, type Session } from '../deck'
 import { SESSION_MIME, sessionRef } from '../../sessionref'
 import { splitBracketed } from '../../slashpaste'
 
@@ -481,11 +481,13 @@ onMounted(() => {
           activate: (e: MouseEvent) => {
             if (t.kind === 'url') return void window.open(t.url, '_blank', 'noopener')
             if (!wantsOpen(e)) return
+            // ⌘⇧-click a `! command`: run it in a new terminal attached to this session [T1120-7]
+            if (t.kind === 'run' && e.shiftKey) return menuRunInShell(t.cmd)
             if (t.kind === 'path') openPath(t.path, contextFor(start.y, start.x), 'open', spot(e.clientX, e.clientY))
             else go(t)
           },
           hover: () => {
-            if (t.kind === 'compact' || t.kind === 'run') return void (hovered = null)
+            if (t.kind === 'compact') return void (hovered = null)
             if (t.kind === 'path') return void ((hovered = { kind: 'path', text: t.path, y0: start.y, x0: start.x }), peekSoon(t.path, () => contextFor(start.y, start.x), start.y, start.x))
             hovered = { kind: 'link', text: l.text, y0: start.y, x0: start.x, link: l }
             cardSoon(l)
@@ -561,6 +563,12 @@ async function folderCheck(m: NonNullable<typeof menu.value>) {
 }
 function closeMenu() {
   menu.value = null
+}
+/** A `! command` from the menu: run it in a new terminal attached to this session, in its folder [T1120-7] */
+function menuRunInShell(cmd: string) {
+  menu.value = null
+  const agent = props.s.where === 'deck' && props.s.tmux && props.s.kind === 'claude'
+  void startShell(props.s.cwd, cmd, `$ ${cmd.slice(0, 40)}`, false, agent ? props.s.key : undefined).catch((e) => alert(e.message))
 }
 function menuOpen(how: 'open' | 'reveal') {
   const m = menu.value
@@ -886,6 +894,7 @@ const autoTitle = computed(() =>
         </template>
         <template v-else-if="menu.link">
           <button data-link-go class="block w-full px-3 py-1.5 text-left hover:bg-canvas-2" @click="menuOpen('open')">{{ menu.link.label }}</button>
+          <button v-if="menu.link.target.kind === 'run'" data-link-shell class="block w-full px-3 py-1.5 text-left hover:bg-canvas-2" @click="menuRunInShell((menu.link.target as { cmd: string }).cmd)">Run in a new terminal</button>
           <button v-if="menuCopyLabel(menu.link)" class="block w-full px-3 py-1.5 text-left hover:bg-canvas-2" @click="menuCopy">{{ menuCopyLabel(menu.link) }}</button>
         </template>
         <template v-else>

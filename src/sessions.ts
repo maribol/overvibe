@@ -1471,6 +1471,16 @@ function maybeAutoName(r: DeckRecord, tm: ReturnType<typeof tmeta>, status: stri
  * A plain login shell in a folder (⌥T, Ctrl+P "$ cmd", New session's Terminal, overvibe new --tool shell), optionally running a command first.
  * `by`: the session that opened it with overvibe new; it is recorded so that session can stop it [T1111-21].
  */
+/** A new shell's prompt is up: its screen has text and stays the same for 400 ms (at most 10 s). */
+async function shellReady(tmux: string) {
+  let last = ''
+  for (let t = 0; t < 10_000; t += 200) {
+    await Bun.sleep(200)
+    const screen = (await capture(tmux, 0).catch(() => '')).trimEnd()
+    if (screen && screen === last) return
+    last = screen
+  }
+}
 export async function startShell(cwd0: string, cmd?: string, name0?: string, by?: DeckRecord, attachTo?: DeckRecord) {
   const cwd = checkCwd(cwd0)
   const sh = loginShell()
@@ -1478,7 +1488,8 @@ export async function startShell(cwd0: string, cmd?: string, name0?: string, by?
   await newSession(rec.tmux, cwd, [sh, '-l'])
   records.push(rec)
   save()
-  if (cmd?.trim()) setTimeout(() => typeInto(rec.tmux, cmd.trim()).catch(() => {}), 400)
+  // its command once the shell is ready: a zsh setup that takes a second or two drops an Enter typed before its prompt [T1120-7]
+  if (cmd?.trim()) void shellReady(rec.tmux).then(() => typeInto(rec.tmux, cmd.trim())).catch(() => {})
   return rec
 }
 

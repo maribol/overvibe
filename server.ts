@@ -16,7 +16,7 @@ import { guardedInput } from './src/mouseguard'
 import { deckClient, deliverNow, discard, kick as kickQueue, ownerInput, queueView } from './src/sendqueue'
 import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view, suspendSession, reviveSession, savedScreen, autoSuspend, setParent, suspendFor, reviveFor, parentFor, memGuard, subagentOf, showInCli } from './src/sessions'
 import { SUSPEND_CHOICES } from './src/suspend'
-import { addon, addonLoaded, loadAddons } from './src/addons'
+import { cards, cardsLoaded, loadAddons } from './src/addons'
 import { addBot, changeBot, postAct, startFromBurst, startNow, proposePost, requestAct, requestList, researching, retryFailed, requestOne, requestsOn, requestsOpen, startTelegram, telegramView } from './src/telegram'
 import { accountFor, accountsOf, chromeAccountNow, getSettings, isMode, isPaused, modeFor, modeUnsaved, needsChrome, routeFor, ruleFor, setSettings, type Mode } from './src/routing'
 import { loadRouter, routerActive } from './src/localrouter'
@@ -305,7 +305,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     const accounts = listAccounts(undefined, { hidden: getSettings().hiddenAccounts }).map((a) => (DEMO && a.email ? { ...a, email: `${a.name}@example.com` } : a)).map((a) => (a.tool === 'claude' ? { ...a, chrome: chromeOf(a.name) } : a)).map((a) => (isPaused(a.name, a.tool) ? { ...a, paused: true } : a))
     const v = await scopedView()
     refreshTidy()
-    return json({ ...v, sessions: v.sessions.map((s) => withQueue(s)).map((s) => (tidyDone.has(s.key) && s.status !== 'busy' && s.status !== 'waiting' ? { ...s, tidy: tidyDone.get(s.key) } : owesNow(s) ? { ...s, owes: tidyOwes.get(s.key)!.reason } : s)), accounts, tools: await toolStatus(), home: tildify(HOME), homeAbs: HOME, settings: getSettings(), chromeAccount: chromeAccountNow(), router: routerActive(), self: selfUpdate(), pending: pendingAll().filter((x) => inScope(x.cwd)), focus: getFocus(), build: buildId(), requests: requestsOn() || addon.on() ? { open: requestsOpen() + addon.openCount() } : null, addons: { desk: addonLoaded } })
+    return json({ ...v, sessions: v.sessions.map((s) => withQueue(s)).map((s) => (tidyDone.has(s.key) && s.status !== 'busy' && s.status !== 'waiting' ? { ...s, tidy: tidyDone.get(s.key) } : owesNow(s) ? { ...s, owes: tidyOwes.get(s.key)!.reason } : s)), accounts, tools: await toolStatus(), home: tildify(HOME), homeAbs: HOME, settings: getSettings(), chromeAccount: chromeAccountNow(), router: routerActive(), self: selfUpdate(), pending: pendingAll().filter((x) => inScope(x.cwd)), focus: getFocus(), build: buildId(), requests: requestsOn() || cards.on() ? { open: requestsOpen() + cards.openCount() } : null, addons: { cards: cardsLoaded } })
   }
   // what Send feedback's "Include version and OS" adds, shown in the dialog before it goes [T1112-120]
   if (p === '/api/feedback/env' && req.method === 'GET') return json(await feedbackEnv())
@@ -454,7 +454,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     try {
       // an add-on's help cards ride along as their own kind (src/addons.ts)
       const help = url.searchParams.get('help')
-      return json(help ? addon.one(help) : rid ? requestOne(rid) : { requests: requestList(), help: addon.rows(), researching: researching() })
+      return json(help ? cards.one(help) : rid ? requestOne(rid) : { requests: requestList(), help: cards.rows(), researching: researching() })
     } catch (e: any) {
       return bad(e.message, 404)
     }
@@ -484,8 +484,8 @@ async function api(req: Request, url: URL): Promise<Response> {
     if (body.from || proofOnly) return bad('only the owner acts on requests', 403)
     try {
       if (body.help) {
-        const msg = await addon.act(String(body.help), body.act, body.text)
-        return json({ msg, help: addon.one(String(body.help)) })
+        const msg = await cards.act(String(body.help), body.act, body.text)
+        return json({ msg, help: cards.one(String(body.help)) })
       }
       // a failed research run: Retry or Dismiss [T1118-15]
       if (body.failed) return json(retryFailed(String(body.failed), body.act === 'dismiss'))
@@ -497,15 +497,15 @@ async function api(req: Request, url: URL): Promise<Response> {
     }
   }
   // an add-on's Settings section (src/addons.ts): its token goes in and never comes back out
-  if (p === '/api/addon' && req.method === 'GET') return json(addon.view())
-  if (p === '/api/addon/picture' && req.method === 'GET') return (await addon.picture(url.searchParams.get('key') ?? '')) ?? bad('no picture', 404)
-  if (p === '/api/addon' || p === '/api/addon/poll' || p === '/api/addon/apps') {
+  if (p === '/api/cards' && req.method === 'GET') return json(cards.view())
+  if (p === '/api/cards/picture' && req.method === 'GET') return (await cards.picture(url.searchParams.get('key') ?? '')) ?? bad('no picture', 404)
+  if (p === '/api/cards' || p === '/api/cards/poll' || p === '/api/cards/apps') {
     if (body.from || proofOnly) return bad('only the owner can change this', 403)
     try {
-      if (p === '/api/addon/poll') await addon.pollSoon()
-      else if (p === '/api/addon/apps') await addon.refreshApps(true)
-      else return json(addon.setConfig(body))
-      return json(addon.view())
+      if (p === '/api/cards/poll') await cards.pollSoon()
+      else if (p === '/api/cards/apps') await cards.refreshApps(true)
+      else return json(cards.setConfig(body))
+      return json(cards.view())
     } catch (e: any) {
       return bad(e.message)
     }

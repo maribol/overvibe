@@ -375,10 +375,10 @@ onUnmounted(() => clearInterval(t))
             <button class="btn btn-soft btn-sm" :disabled="help.closed || help.done.includes('task') || help.done.includes('start') || !!busy" @click="helpAct('task')"><Spinner v-if="busy === 'task'" /> {{ help.taskId ? `Task ${help.taskId}` : 'Add task' }}</button>
             <button class="btn btn-primary btn-sm" :disabled="help.closed || help.done.includes('start') || !!busy" @click="helpAct('start')"><Spinner v-if="busy === 'start'" /> Start session</button>
             <button v-if="helpSessionKey" class="btn btn-ghost btn-sm" @click="select(helpSessionKey!)">Open the session</button>
-            <a v-if="help.link" class="btn btn-ghost btn-sm ml-auto" :href="help.link" target="_blank" rel="noopener">Open in add-on</a>
+            <a v-if="help.link" class="btn btn-ghost btn-sm ml-auto" :href="help.link" target="_blank" rel="noopener">Open its source</a>
           </div>
           <p v-if="msg" class="mt-2 text-[12.5px] text-muted">{{ msg }}</p>
-          <p class="mt-2 text-[12px] text-faint">Add task writes a line to {{ help.repo ?? 'the tool\'s repo (none known yet)' }}'s TASKS.md. Start session adds it too and opens a session there to fix it; when the line is ticked with its check, the card is resolved on the desk with the commit.</p>
+          <p class="mt-2 text-[12px] text-faint">Add task writes a line to {{ help.repo ?? 'the tool\'s repo (none known yet)' }}'s TASKS.md. Start session adds it too and opens a session there to fix it; when the line is ticked with its check, the card is resolved at its source with the commit.</p>
         </div>
 
         <section v-if="help.command" class="mt-6">
