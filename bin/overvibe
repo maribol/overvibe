@@ -159,6 +159,11 @@ ov is the short form of overvibe where it is installed.
   overvibe context ["<session name>"] [--json]   what a Claude or Codex session's context holds now (default: this one): used
       out of the window, fixed overhead (system prompt, tools, skills list, CLAUDE.md) against your messages, replies, tool
       output by tool, skill loads, subagent reports, and the 5 biggest items; read from its transcript, nothing is typed into it
+  overvibe telegram post --to "<group>" [--request <id> | --reply <msg id>] [--text "..." | --text-file f] [--photo a.png --video ad.mp4 ...]
+      a post for a customer Telegram group linked to this session's folder (overvibe telegram groups lists them): text and
+      up to 10 pictures (png, jpg, webp, gif; 20 MB each) and videos (mp4, mov, m4v, webm; 50 MB each). It goes straight in and the owner gets a copy with Delete; a group
+      set to ask (Settings > Telegram) waits for their Send instead. --request <id>: a reply to that request; --reply <msg id>:
+      a reply to that message (the [msg N] in a relayed follow-up)
   overvibe tidy [--hours N] [--json]   running sessions sorted for closing: done (idle N hours, default 2, its last reply
       asks nothing), waiting on you (a menu is open or its last reply asks something), unsure; with each one's idle time,
       reason and last reply. It never closes anything: recommend, and the owner closes them in Overvibe (Close old sessions)
@@ -166,7 +171,7 @@ ov is the short form of overvibe where it is installed.
       your messages, Claude's and Codex's replies, agy's screen; every word must be in the same message; newest first,
       up to 3 hits per session (default 10 sessions). Shell screens are left out (they can hold secrets)
   overvibe accounts [--json]   the Claude and Codex accounts: email, usage, and which one Claude in Chrome is paired with
-      (overvibe new --chrome, without --account, runs there); a paused one is refused for new, resumed and switched sessions
+      (overvibe new --chrome, without --account, runs there); a paused one is never picked by itself; name it only when the owner asks
   overvibe read <id>   one message sent to this session, whole: a long one arrives as its start plus this command
   overvibe attach "<session name>" [--print]   open a running session in this terminal (tmux attach); Ctrl-b d detaches and leaves it running
       --print: only show the tmux command it would run
@@ -458,7 +463,7 @@ try {
       const chromeWord: Record<string, string> = { paired: 'paired with Claude in Chrome', 'set up': 'Chrome set up, not paired', installed: '', '': '' }
       for (const a of st.accounts) {
         const use = Object.entries(a.windows ?? {}).map(([k, w]: any) => `${k} ${Math.round(w.used)}%`).join(', ')
-        const bits = [a.paused ? 'paused: nothing new runs on it' : '', a.email, a.plan, use, a.tool === 'claude' ? chromeWord[a.chrome ?? ''] : '', a.tool === 'claude' && a.name === st.chromeAccount ? '--chrome sessions run here' : ''].filter(Boolean)
+        const bits = [a.paused ? 'paused: not picked by itself' : '', a.email, a.plan, use, a.tool === 'claude' ? chromeWord[a.chrome ?? ''] : '', a.tool === 'claude' && a.name === st.chromeAccount ? '--chrome sessions run here' : ''].filter(Boolean)
         console.log(`${a.tool === 'codex' ? 'codex ' : ''}${a.name}${bits.length ? `  (${bits.join('; ')})` : ''}`)
       }
       if (!st.chromeAccount) console.error('no account is set for Claude in Chrome: set it in Settings, or pair the extension with one account')
@@ -504,6 +509,19 @@ try {
       }
       console.log(`Total: the last request's exact input (${rep.exactInput.toLocaleString()}) plus what came after it. Parts are estimates (characters / 4) scaled to fit it.`)
     }
+  } else if (cmd === 'telegram' && (rest[0] === 'post' || rest[0] === 'groups')) {
+    // [T1119-2] a post with pictures for a linked Telegram group; the owner approves it in their chat with the bot
+    if (rest[0] === 'groups') {
+      const v = await call('/api/telegram')
+      for (const b of v.bots ?? []) for (const c of b.chats ?? []) if (c.id < 0) console.log(`"${c.title}"  linked to ${c.cwd ? tildAll(c.cwd) : '(no folder: no session can post there)'}`)
+    } else {
+      const photos: string[] = []
+      rest.forEach((x, i) => (x === '--photo' || x === '--video') && rest[i + 1] && photos.push(resolve(rest[i + 1]!)))
+      const text = flag('text') ?? (flag('text-file') ? readFileSync(resolve(flag('text-file')!), 'utf8') : '')
+      const r = await call('/api/telegram/post', { to: flag('to'), request: flag('request'), reply: flag('reply'), text, photos, from: SELF || undefined })
+      const n = r.photos ? ` (${r.photos} picture${r.photos > 1 ? 's' : ''})` : ''
+      console.log(r.sent ? `Posted in "${r.group}"${n}. The owner got a copy and can delete it; you'll get a note if they do.` : `Asked the owner to approve your post for "${r.group}"${n}: this group's posts wait for their Send. You'll get a note either way. Don't send it twice.`)
+    }
   } else if (cmd === 'tidy') {
     const h = flag('hours')
     if (h !== undefined && !(Number(h) > 0)) throw new Error('--hours takes a number above 0, e.g. --hours 4')
@@ -518,7 +536,7 @@ try {
         const list = r.sessions.filter((x: any) => x.verdict === v)
         console.log(`\n${label}: ${list.length}`)
         for (const x of list) {
-          const tags = [x.tool, x.project, `idle ${idle(x.idleMs)}`, x.pinned ? 'pinned' : ''].filter(Boolean).join(', ')
+          const tags = [x.tool, x.project, `idle ${idle(x.idleMs)}`, x.pinned ? 'pinned' : '', x.suspended ? 'suspended' : ''].filter(Boolean).join(', ')
           console.log(`  "${x.title}" (${tags}): ${x.reason}`)
           if (x.reply) {
             const text = tildAll(String(x.reply)).replace(/\s+/g, ' ').trim()

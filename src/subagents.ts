@@ -6,7 +6,7 @@
 import { closeSync, openSync, readFileSync, readdirSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-export type SubAgent = { id: string; desc: string; type: string; started: number; at: number }
+export type SubAgent = { id: string; desc: string; type: string; started: number; at: number; /** what it is doing now: its last tool call, the line Claude Code shows in its list [T1119-23] */ step?: string }
 export type SubEvent = { at: number; kind: 'prompt' | 'text' | 'tool' | 'error'; text: string }
 
 const STALE_MS = 30 * 60_000
@@ -32,12 +32,41 @@ export function runningSubagents(transcript: string, now = Date.now()): SubAgent
       if (meta.finished) continue
       const st = statSync(join(dir, `agent-${m[1]}.jsonl`))
       if (now - st.mtimeMs > STALE_MS) continue
-      list.push({ id: m[1]!, desc: String(meta.description ?? meta.agentType ?? 'subagent').slice(0, 120), type: String(meta.agentType ?? 'agent'), started: st.birthtimeMs || st.ctimeMs, at: st.mtimeMs })
+      list.push({ step: lastStep(join(dir, `agent-${m[1]}.jsonl`), st.size), id: m[1]!, desc: String(meta.description ?? meta.agentType ?? 'subagent').slice(0, 120), type: String(meta.agentType ?? 'agent'), started: st.birthtimeMs || st.ctimeMs, at: st.mtimeMs })
     } catch {}
   }
   list.sort((a, b) => a.started - b.started)
   cache.set(dir, { at: now, list })
   return list
+}
+
+/** Its last tool call, read from the transcript's end (64 KB): the tool's own description, else what it touches. */
+function lastStep(file: string, size: number): string | undefined {
+  try {
+    const from = Math.max(0, size - 64 * 1024)
+    const buf = Buffer.alloc(size - from)
+    const fd = openSync(file, 'r')
+    try {
+      readSync(fd, buf, 0, buf.length, from)
+    } finally {
+      closeSync(fd)
+    }
+    const lines = buf.toString('utf8').split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i]!.includes('"tool_use"')) continue
+      let d: any
+      try {
+        d = JSON.parse(lines[i]!)
+      } catch {
+        continue
+      }
+      const uses = (Array.isArray(d.message?.content) ? d.message.content : []).filter((b: any) => b?.type === 'tool_use')
+      const b = uses.at(-1)
+      if (!b) continue
+      const desc = typeof b.input?.description === 'string' && b.input.description.trim()
+      return (desc || toolLine(b.name, b.input)).replace(/\s+/g, ' ').slice(0, 120)
+    }
+  } catch {}
 }
 
 /** A subagent's description and type from its meta file, finished or not. */

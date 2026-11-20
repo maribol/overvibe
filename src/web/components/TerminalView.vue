@@ -845,7 +845,7 @@ const autoTitle = computed(() =>
           <template v-if="canSwitch">
             <div class="mt-1 border-t border-line px-3 pb-0.5 pt-1.5 text-[11px] text-faint">Switch to (restarts it, same conversation)</div>
             <button v-for="a in accountsFor('claude')" :key="a.name" class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-canvas-2 disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="a.paused && a.name !== accountName" :title="a.email || undefined" @click="switchTo(a.name)">
+              :title="a.email || undefined" @click="switchTo(a.name)">
               <Check :size="13" class="flex-none" :class="a.name === accountName ? '' : 'invisible'" />
               <span class="truncate">{{ a.name }}{{ a.paused ? ' · paused' : '' }}</span>
             </button>

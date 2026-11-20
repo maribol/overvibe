@@ -15,7 +15,9 @@ type Item = { id: string; kind: 'session' | 'action' | 'folder' | 'hit'; label: 
 type Hit = { at: number; role: 'you' | 'claude' | 'codex' | 'peer' | 'screen'; snippet: string; hl: [number, number][] }
 type Found = { key: string; sessionId: string | null; tool: string; title: string; cwd: string; project: string; state: 'running' | 'stopped' | 'hidden'; old?: boolean; at: number; hits: Hit[]; row?: any }
 
+const opened = deck.paletteQuery || ''
 const q = ref('')
+deck.paletteQuery = ''
 const at = ref(0)
 const input = ref<HTMLInputElement>()
 const found = ref<{ cwd: string }[]>([])
@@ -55,7 +57,8 @@ const actions: Item[] = [
   { id: 'a:tidy', kind: 'action', label: 'Close old sessions', hint: 'done, waiting on you, unsure', icon: BrushCleaning, run: () => setView('tidy') },
   { id: 'a:settings', kind: 'action', label: 'Accounts & settings', icon: Settings, run: () => setView('settings') },
   { id: 'a:theme', kind: 'action', label: theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode', icon: theme() === 'dark' ? Sun : Moon, run: toggleTheme },
-  { id: 'a:shell', kind: 'action', label: 'Terminal in this folder', hint: alt('T'), icon: TerminalSquare, run: () => startShell(here()) },
+  { id: 'a:shell', kind: 'action', label: 'Plain terminal in this folder', hint: alt('⇧T'), icon: TerminalSquare, run: () => startShell(here()) },
+  { id: 'a:shellattached', kind: 'action', label: 'Terminal attached to this session', hint: alt('T'), icon: TerminalSquare, run: () => { const c = current.value; return startShell(here(), undefined, c?.kind === 'claude' && c.tmux ? `shell: ${c.title.slice(0, 40)}` : undefined, false, c?.kind === 'claude' && c.where === 'deck' && c.tmux ? c.key : undefined) } },
   { id: 'a:newterm', kind: 'action', label: 'New terminal…', hint: 'pick a folder and a name', icon: TerminalSquare, run: () => openNew('', 'shell') },
   { id: 'a:setup', kind: 'action', label: 'Setup', hint: 'projects folder, agents, logins', icon: Sparkles, run: () => openSetup() },
   { id: 'a:feedback', kind: 'action', label: 'Send feedback', hint: 'feature request, bug report', icon: MessageSquareHeart, run: () => (deck.feedbackOpen = true) },
@@ -166,7 +169,11 @@ function run(i?: Item) {
   close()
   i.run()
 }
-onMounted(() => input.value?.focus())
+onMounted(() => {
+  input.value?.focus()
+  // opened from the sidebar filter with its text: search it [T1119-28]
+  if (opened) q.value = opened
+})
 </script>
 
 <template>

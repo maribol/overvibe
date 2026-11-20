@@ -56,7 +56,8 @@ type Index = { offsets: Record<string, number>; metas: Record<string, Meta>; mes
 // bump when a new field needs every transcript read again from the start
 // 4: Meta.work [T1110-84]; 5: work per hour, overvibe/deck send headers read from transcripts [T1110-89]
 // 6: Meta.tokens [T1111-13]; 7: Meta.apiError [T1112-1]; 8: lastAt from the newest line, not the mtime [T1112-7]
-const INDEX_V = 8
+// 9: turnOpen without local commands' lines (a session left "busy" after a /compact reads idle again) [T1119-8]
+const INDEX_V = 9
 
 let idx: Index = { offsets: {}, metas: {}, messages: [], edges: [], v: INDEX_V }
 try {
@@ -150,6 +151,19 @@ const sameDeck = (e: Edge, toSession: string | null, summary: string, at: number
 
 const XS = /<cross-session-message\s+from="([^"]*)"\s+from-name="([^"]*)"[^>]*>([\s\S]*?)(?:<\/cross-session-message>|$)/
 
+const LOCAL_COMMAND = /^\s*<(local-command-(caveat|stdout|stderr)|command-name|command-message|command-args)>/
+/** A transcript line that starts (or goes on with) a turn: a prompt, a tool result, a reply. Not a local command's
+ *  lines (/compact, /context...), a compaction summary or a meta line [T1119-8]. */
+export function opensTurn(d: any): boolean {
+  if (d?.type === 'assistant') return true
+  if (d?.type !== 'user') return false
+  if (d.isMeta || d.isCompactSummary || d.isVisibleInTranscriptOnly) return false
+  const c = d.message?.content
+  if (Array.isArray(c) && c.some((b: any) => b?.type === 'tool_result')) return true
+  const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map((b: any) => (b?.type === 'text' ? (b.text ?? '') : '')).join('') : ''
+  return !LOCAL_COMMAND.test(text)
+}
+
 function apply(file: string, d: any) {
   const id: string = d.sessionId || basename(file, '.jsonl')
   const m = (idx.metas[id] ??= { id, file, cwd: null, title: null, agentName: null, firstPrompt: null, lastPrompt: null, lastAt: 0, startedAt: null })
@@ -196,7 +210,9 @@ function apply(file: string, d: any) {
   if (d.type === 'user' && m.pending && Array.isArray(d.message?.content) && d.message.content.some((b: any) => b?.type === 'tool_result' && b.tool_use_id === m.pending!.toolUseId)) {
     m.pending = null
   }
-  if (d.type === 'user' && !d.isSidechain) m.turnOpen = true
+  // a prompt opens a turn; a local command's lines (/compact's caveat, command, summary and output) open none: they have
+  // no turn_duration, so with a background shell listed the session read busy for good [T1119-8]
+  if (!d.isSidechain && opensTurn(d)) m.turnOpen = true
   if (d.type === 'system' && d.subtype === 'turn_duration') {
     m.turnOpen = false
     if (!d.isSidechain && typeof d.durationMs === 'number' && d.durationMs > 0) addWork((m.work ??= {}), when, d.durationMs)
@@ -444,6 +460,8 @@ export function start() {
 }
 
 export const meta = (id: string): Meta | undefined => idx.metas[id]
+/** tests: one transcript line through the index, as readNew would (nothing is written to index.json) */
+export const applyLineForTest = (file: string, d: any) => apply(file, d)
 
 /**
  * The question a session's turn ended on, if any. Index entries from before `asking` existed get it once

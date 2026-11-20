@@ -11,7 +11,7 @@ import { fileForCwd } from '../../taskview'
 import { taskFiles, tasksOn } from '../tasks'
 import TaskTip from './TaskTip.vue'
 import SubagentRows from './SubagentRows.vue'
-import { ago, askStop, deck, draggedSession, isCoordinator, isPinned, openNew, orderProjects, OTHER, pinId, projectOf, rememberProjects, saveProjectOrder, select, setPinned, shortCwd, showSubagent, shownAgentOf, type Session } from '../deck'
+import { ago, api, askStop, closeRow, deck, draggedSession, isCoordinator, isPinned, openNew, orderProjects, OTHER, pinId, projectOf, rememberProjects, saveProjectOrder, select, selectNeighbour, setPinned, shortCwd, showSubagent, shownAgentOf, type Session } from '../deck'
 
 const q = ref('')
 const closedOpen = ref(localStorage.getItem('deck.closedOpen') !== '0')
@@ -36,18 +36,55 @@ const pinned = computed(() => {
     const id = pinId(s), had = best.get(id)
     if (!had || (isClosed(had) && !isClosed(s))) best.set(id, s)
   }
-  return (deck.settings.pins ?? []).map((id) => best.get(id)).filter((s): s is Session => !!s && (!needle || hay(s).includes(needle)))
+  return (deck.settings.pins ?? []).map((id) => best.get(id)).filter((s): s is Session => !!s && matches(s, needle))
 })
 
 // in first-seen order too: the server sends sessions newest-activity first, which would reshuffle this box
 const coordinators = computed(() => deck.sessions.filter((s) => s.kind === 'claude' && isCoordinator(s) && !isPinned(s) && s.where !== 'past' && !(s.where === 'deck' && !s.tmux)).sort((a, b) => seen(a.key) - seen(b.key)))
 const isClosed = (s: Session) => s.where === 'past' || (s.where === 'deck' && !s.tmux && !s.suspended)
 const hay = (s: Session) => `${s.title} ${s.cwd} ${s.project ?? ''} ${s.lastPrompt ?? ''}`.toLowerCase()
+// deep filter [T1119-28]: past 2 characters the filter also asks the search index (what was said in each session,
+// running, stopped and past; shells' screens left out) and keeps the sessions whose messages match, with the hit
+const deep = ref(new Map<string, string>())
+const deepBusy = ref(false)
+/** hits in sessions the sidebar does not list (hidden, older than 7 days): ⌘K shows them */
+const deepOld = ref(0)
+let deepTimer: ReturnType<typeof setTimeout> | undefined
+let deepSeq = 0
+watch(q, (v) => {
+  clearTimeout(deepTimer)
+  const want = v.trim()
+  if (want.length < 3) return ((deep.value = new Map()), (deepOld.value = 0), (deepBusy.value = false))
+  deepBusy.value = true
+  deepTimer = setTimeout(async () => {
+    const seq = ++deepSeq
+    try {
+      const r = await api<{ results: { key: string; sessionId: string | null; hits: { snippet: string }[] }[] }>(`/api/search?q=${encodeURIComponent(want)}&screens=agents&hidden=0&limit=40`)
+      if (seq !== deepSeq) return
+      const m = new Map<string, string>()
+      for (const x of r.results) {
+        const snip = x.hits[0]?.snippet ?? ''
+        m.set(x.key, snip)
+        if (x.sessionId) m.set(x.sessionId, snip)
+      }
+      deep.value = m
+      deepOld.value = r.results.filter((x) => !deck.sessions.some((s) => s.key === x.key || (!!x.sessionId && s.sessionId === x.sessionId))).length
+    } catch {
+      if (seq === deepSeq) deep.value = new Map()
+    } finally {
+      if (seq === deepSeq) deepBusy.value = false
+    }
+  }, 300)
+})
+/** the filter keeps a row by its name, folder or last prompt, or by what was said in it */
+const matches = (s: Session, needle: string) => !needle || hay(s).includes(needle) || deep.value.has(s.key) || (!!s.sessionId && deep.value.has(s.sessionId))
+/** the matching line, for a row kept only by what was said in it */
+const deepHit = (s: Session) => (q.value.trim() && !hay(s).includes(q.value.trim().toLowerCase()) ? deep.value.get(s.key) ?? (s.sessionId ? deep.value.get(s.sessionId) : undefined) : undefined)
 
 // closed sessions, newest first; searching looks through all of them
 const closed = computed(() => {
   const needle = q.value.trim().toLowerCase()
-  const list = deck.sessions.filter((s) => s.kind === 'claude' && isClosed(s) && !isPinned(s) && (!needle || hay(s).includes(needle)))
+  const list = deck.sessions.filter((s) => s.kind === 'claude' && isClosed(s) && !isPinned(s) && matches(s, needle))
   return list.sort((a, b) => b.last - a.last).slice(0, needle ? 40 : 15)
 })
 
@@ -77,7 +114,7 @@ const unpinned = computed(() => {
   return deck.sessions
     .filter((s) => s.kind !== 'login' || s.tmux)
     .filter((s) => !isClosed(s) && !isPinned(s))
-    .filter((s) => !needle || hay(s).includes(needle))
+    .filter((s) => matches(s, needle))
 })
 // attached children: nested under their parent's row wherever it is shown (a pinned row or a group row)
 const tree = computed(() => {
@@ -171,7 +208,15 @@ const dot: Record<string, string> = {
 const whereLabel: Record<string, string | null> = { deck: null, terminal: 'Terminal', background: 'bg', past: null }
 // the red question mark: why the session is waiting on you
 /** a running deck session: hovering its time shows a close button [T1112-5] */
-const canClose = (s: { where: string; tmux?: string | null; status: string }) => s.where === 'deck' && !!s.tmux && s.status !== 'ended'
+const canClose = (s: { where: string; tmux?: string | null; status: string; suspended?: number }) => s.where === 'deck' && ((!!s.tmux && s.status !== 'ended') || !!s.suspended)
+/** the row's X: a running one asks first (Stop dialog); a suspended one has nothing to stop, so one that looked done is
+ * hidden at once, and any other opens its Revive card, whose Close asks again */
+function closeFromRow(s: Session) {
+  if (!s.suspended) return askStop(s, { close: true })
+  if (s.suspendedVerdict !== 'done') return select(s.key)
+  if (deck.selected === s.key) selectNeighbour(s.key)
+  void closeRow(s)
+}
 /** done and safe to close, per Close old sessions [T1112-4] */
 const doneHint = (why: string) => `Looks done: ${why}. ⌘W closes it; Close old sessions lists all of them.`
 /** a session whose last reply stopped on an API error [T1112-1] */
@@ -266,10 +311,13 @@ function rowClick(s: Session) {
     <div class="flex items-center gap-2 px-3 pb-2">
       <div class="relative flex-1">
         <Search :size="14" class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
-        <input v-model="q" class="input !py-1.5 !pl-8 !text-[13px]" placeholder="Filter sessions" />
+        <input v-model="q" class="input !py-1.5 !pl-8 !text-[13px]" placeholder="Filter sessions and messages" title="Matches names and folders, and past 2 characters what was said in each session" />
+        <span v-if="deepBusy" class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-faint">searching…</span>
+        <span v-else-if="q.trim().length >= 3 && deep.size" class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-faint" data-deep-count>in messages too</span>
       </div>
 
     </div>
+    <button v-if="q.trim().length >= 3 && deepOld && !deepBusy" type="button" class="mx-3 mb-2 text-left text-[11.5px] text-faint hover:text-ink-soft" data-deep-old @click="(deck.paletteQuery = q.trim()), (deck.paletteOpen = true)">{{ deepOld }} more in older or hidden sessions: show in ⌘K</button>
 
     <nav class="min-h-0 flex-1 overflow-y-auto px-2 pb-3 text-[13.5px]" @pointerdown="noteClick(); hideTip()" @contextmenu="noteClick(); hideTip()" @dragstart="hideTip(); onRowDragStart($event)" @dragend="draggedSession = null" @pointerover="onOver" @pointerout="onOut" @scroll.passive="hideTip">
       <div v-if="!deck.loaded" class="px-2.5 py-3 text-[13px] text-faint">Loading…</div>
@@ -287,7 +335,7 @@ function rowClick(s: Session) {
           <span v-if="depth" class="-ml-1 flex-none text-[11px] leading-none text-[var(--color-line-strong)]" title="Attached to the session above (deck new --attach)">↳</span>
           <Star v-if="isCoordinator(s)" :size="12" class="flex-none fill-[var(--color-brand-400)] text-[var(--color-brand-400)]" :class="isClosed(s) ? 'opacity-50' : ''" />
           <span v-else :class="dot[isClosed(s) ? 'ended' : s.status]"></span>
-          <span class="min-w-0 flex-1 truncate" :class="isClosed(s) ? 'text-faint' : ''">{{ s.title }}</span>
+          <span class="min-w-0 flex-1 truncate" :class="isClosed(s) ? 'text-faint' : ''">{{ s.title }}<span v-if="deepHit(s)" class="block truncate text-[11px] font-normal text-faint" data-deep-hit>{{ deepHit(s) }}</span></span>
           <span v-if="kids" class="flex flex-none items-center text-[10.5px] text-faint hover:text-ink" :title="foldedKids.has(s.key) ? `Show its ${kids} attached session${kids > 1 ? 's' : ''}` : 'Fold its attached sessions'" @click.stop="toggleKids(s.key)">
             <component :is="foldedKids.has(s.key) ? ChevronRight : ChevronDown" :size="12" /><span v-if="foldedKids.has(s.key)">{{ kids }}</span>
           </span>
@@ -304,7 +352,7 @@ function rowClick(s: Session) {
           <span v-else-if="s.kind === 'claude' && s.where === 'deck' && !s.hand" class="tag bg-[var(--color-chip-gray-bg)] text-[var(--color-chip-gray-fg)]" title="Auto mode: the tool runs commands and edits without asking">auto</span>
           <span v-if="isPinned(s)" class="hidden flex-none text-faint hover:text-ink group-hover:flex" title="Unpin" @click.stop="setPinned(s, false).catch(() => {})"><PinOff :size="12" /></span>
           <span class="row-time w-6 flex-none text-right text-[10.5px] tabular-nums text-faint opacity-70">{{ ago(s.last) }}</span>
-          <button v-if="canClose(s)" type="button" class="row-x w-6 flex-none items-center justify-end text-faint hover:text-[var(--color-danger)]" title="Close (⌘W): stops it, unpins and hides it; the conversation is kept" @click.stop="askStop(s, { close: true })" @mousedown.stop><X :size="13" /></button>
+          <button v-if="canClose(s)" type="button" class="row-x w-6 flex-none items-center justify-end text-faint hover:text-[var(--color-danger)]" :title="s.suspended ? (s.suspendedVerdict === 'done' ? 'Close: hides this suspended row; the conversation is kept' : 'Close: it may still need you, so this opens it first') : 'Close (⌘W): stops it, unpins and hides it; the conversation is kept'" @click.stop="closeFromRow(s)" @mousedown.stop><X :size="13" /></button>
         </button>
         <SubagentRows :s="s" :depth="depth" />
         </template>
@@ -314,7 +362,7 @@ function rowClick(s: Session) {
         <button v-for="s in coordinators" :key="'k' + s.key" class="side-row !px-1.5 text-[13px]"
           :data-sel="s.key === deck.selected ? '1' : undefined" :data-key="s.key" :draggable="canDrag(s) ? 'true' : undefined" :class="s.key === deck.selected ? 'is-sel' : s.status === 'waiting' ? 'is-wait' : s.apiError ? 'is-err' : s.tidy ? 'is-tidy' : ''" @click="select(s.key)" @contextmenu.prevent="openMenu($event, s)">
           <Star :size="12" class="flex-none fill-[var(--color-brand-400)] text-[var(--color-brand-400)]" />
-          <span class="min-w-0 flex-1 truncate font-medium">{{ s.title }}</span>
+          <span class="min-w-0 flex-1 truncate font-medium">{{ s.title }}<span v-if="deepHit(s)" class="block truncate text-[11px] font-normal text-faint" data-deep-hit>{{ deepHit(s) }}</span></span>
           <span v-if="s.status === 'waiting'" class="flex flex-none" :title="needsYou(s)"><Rocket v-if="s.deploy" :size="13" class="text-[var(--color-chip-violet-fg)]" /><MessageCircleQuestion v-else :size="13" class="text-[var(--color-st-wait)]" /></span>
           <span v-if="s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="stoppedOn(s.apiError)"><CircleAlert :size="13" class="flex-none text-[var(--color-danger)]" /></span>
           <span v-if="s.tidy && !s.apiError && s.status !== 'waiting'" class="flex flex-none" :title="doneHint(s.tidy)"><BrushCleaning :size="13" class="flex-none opacity-70" /></span>
@@ -353,7 +401,7 @@ function rowClick(s: Session) {
               <span v-if="depth" class="-ml-1 flex-none text-[11px] leading-none text-[var(--color-line-strong)]" title="Attached to the session above (deck new --attach)">↳</span>
               <Star v-if="isCoordinator(s)" :size="12" class="flex-none fill-[var(--color-brand-400)] text-[var(--color-brand-400)]" />
               <span v-else :class="dot[s.where === 'past' ? 'ended' : s.status]"></span>
-              <span class="flex-1 truncate" :class="[s.where === 'past' ? 'text-faint' : '', isCoordinator(s) ? 'font-semibold text-ink' : '', g.name ? 'min-w-0' : 'min-w-[8ch]']">{{ s.title }}</span>
+              <span class="flex-1 truncate" :class="[s.where === 'past' ? 'text-faint' : '', isCoordinator(s) ? 'font-semibold text-ink' : '', g.name ? 'min-w-0' : 'min-w-[8ch]']">{{ s.title }}<span v-if="deepHit(s)" class="block truncate text-[11px] font-normal text-faint" data-deep-hit>{{ deepHit(s) }}</span></span>
               <span v-if="!g.name && !depth" class="min-w-0 max-w-[9ch] shrink truncate text-[10.5px] text-faint" data-row-project>{{ projectOf(s) }}</span>
               <span v-if="kids" class="flex flex-none items-center text-[10.5px] text-faint hover:text-ink" :title="foldedKids.has(s.key) ? `Show its ${kids} attached session${kids > 1 ? 's' : ''}` : 'Fold its attached sessions'" @click.stop="toggleKids(s.key)">
                 <component :is="foldedKids.has(s.key) ? ChevronRight : ChevronDown" :size="12" /><span v-if="foldedKids.has(s.key)">{{ kids }}</span>
@@ -372,7 +420,7 @@ function rowClick(s: Session) {
               <span v-if="s.account && s.account !== 'default'" class="tag bg-[var(--color-chip-gray-bg)] text-[var(--color-chip-gray-fg)]">{{ s.account }}</span>
               <span v-if="s.kind !== 'login'" class="hidden flex-none text-faint hover:text-ink group-hover:flex" title="Pin to top" @click.stop="setPinned(s, true).catch(() => {})"><Pin :size="12" /></span>
               <span class="row-time w-6 flex-none text-right text-[10.5px] tabular-nums text-faint opacity-70">{{ ago(s.last) }}</span>
-          <button v-if="canClose(s)" type="button" class="row-x w-6 flex-none items-center justify-end text-faint hover:text-[var(--color-danger)]" title="Close (⌘W): stops it, unpins and hides it; the conversation is kept" @click.stop="askStop(s, { close: true })" @mousedown.stop><X :size="13" /></button>
+          <button v-if="canClose(s)" type="button" class="row-x w-6 flex-none items-center justify-end text-faint hover:text-[var(--color-danger)]" :title="s.suspended ? (s.suspendedVerdict === 'done' ? 'Close: hides this suspended row; the conversation is kept' : 'Close: it may still need you, so this opens it first') : 'Close (⌘W): stops it, unpins and hides it; the conversation is kept'" @click.stop="closeFromRow(s)" @mousedown.stop><X :size="13" /></button>
             </button>
             <SubagentRows :s="s" :depth="depth" />
             </template>
@@ -396,10 +444,10 @@ function rowClick(s: Session) {
             @contextmenu.prevent="openMenu($event, s)"
           >
             <span class="flex items-center gap-2">
-              <span class="min-w-0 flex-1 truncate text-[13px] text-ink-soft">{{ s.title }}</span>
+              <span class="min-w-0 flex-1 truncate text-[13px] text-ink-soft">{{ s.title }}<span v-if="deepHit(s)" class="block truncate text-[11px] font-normal text-faint" data-deep-hit>{{ deepHit(s) }}</span></span>
               <span class="flex-none text-[10.5px] text-faint">{{ projectOf(s) }}</span>
               <span class="row-time w-6 flex-none text-right text-[10.5px] tabular-nums text-faint opacity-70">{{ ago(s.last) }}</span>
-          <button v-if="canClose(s)" type="button" class="row-x w-6 flex-none items-center justify-end text-faint hover:text-[var(--color-danger)]" title="Close (⌘W): stops it, unpins and hides it; the conversation is kept" @click.stop="askStop(s, { close: true })" @mousedown.stop><X :size="13" /></button>
+          <button v-if="canClose(s)" type="button" class="row-x w-6 flex-none items-center justify-end text-faint hover:text-[var(--color-danger)]" :title="s.suspended ? (s.suspendedVerdict === 'done' ? 'Close: hides this suspended row; the conversation is kept' : 'Close: it may still need you, so this opens it first') : 'Close (⌘W): stops it, unpins and hides it; the conversation is kept'" @click.stop="closeFromRow(s)" @mousedown.stop><X :size="13" /></button>
             </span>
             <span v-if="s.lastPrompt" class="block truncate text-[11.5px] text-faint">you: {{ s.lastPrompt }}</span>
           </button>

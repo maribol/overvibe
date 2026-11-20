@@ -1,5 +1,5 @@
-import { expect, test } from 'bun:test'
-import { keepRunning, suspendMinutes, type SuspendRow } from './suspend'
+import { describe, expect, test } from 'bun:test'
+import { idleCompactMin, keepRunning, suspendAfterMin, suspendMinutes, type SuspendRow } from './suspend'
 
 const now = 10_000_000
 const row = (o: Partial<SuspendRow> = {}): SuspendRow => ({ where: 'deck', kind: 'claude', tool: 'claude', status: 'idle', tmux: 'abc', sessionId: 'id', last: now - 40 * 60_000, ...o })
@@ -61,4 +61,22 @@ test('a /loop wakeup still to fire, or a cron job not deleted, keeps it running'
   expect(pendingTimer([use('CronCreate', {}, now - 9000), use('CronDelete', { id: 'x' }, now - 1000)], now)).toBeNull()
   expect(pendingTimer(['not json', '{"type":"user"}'], now)).toBeNull()
   expect(keepRunning(row(), { ...opt, timer: 'a /loop wakeup is scheduled' })).toContain('/loop')
+})
+
+describe('waits for Claude Code idle compaction [T1120-2]', () => {
+  const T = 200_000
+  test('a big Claude context waits 60 min', () => {
+    expect(suspendAfterMin({ min: 30, tool: 'claude', contextTokens: 250_000, idleCompactTokens: T })).toBe(60)
+    expect(suspendAfterMin({ min: 120, tool: 'claude', contextTokens: 250_000, idleCompactTokens: T })).toBe(120)
+  })
+  test('small contexts, Codex and unknown sizes go at the setting', () => {
+    expect(suspendAfterMin({ min: 30, tool: 'claude', contextTokens: 150_000, idleCompactTokens: T })).toBe(30)
+    expect(suspendAfterMin({ min: 30, tool: 'codex', contextTokens: 400_000, idleCompactTokens: T })).toBe(30)
+    expect(suspendAfterMin({ min: 30, tool: 'claude', contextTokens: null, idleCompactTokens: T })).toBe(30)
+  })
+  test('the threshold follows CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS, never under 100k', () => {
+    expect(idleCompactMin(undefined)).toBe(200_000)
+    expect(idleCompactMin('300000')).toBe(300_000)
+    expect(idleCompactMin('5000')).toBe(100_000)
+  })
 })

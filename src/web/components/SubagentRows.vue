@@ -19,11 +19,11 @@ const isOpen = (id: string) => (deck.subagent?.key === props.s.key && deck.subag
     <button
       v-for="a in shown" :key="a.id" type="button" class="side-row is-child !py-[3px] text-[12.5px]" :style="pad"
       :class="isOpen(a.id) ? 'is-sel' : ''" :data-subagent="a.id"
-      :title="`${a.desc}\nSubagent (${a.type}) of “${s.title}”, running. Click to show it in Claude Code.`"
+      :title="`${a.desc}${a.step ? `\nNow: ${a.step}` : ''}\nSubagent (${a.type}) of “${s.title}”, running. Click to show it in Claude Code.`"
       @click="showSubagent(s.key, a.id)"
     >
       <Bot :size="12" class="-ml-0.5 flex-none text-[var(--color-st-busy)] opacity-80" />
-      <span class="min-w-0 flex-1 truncate text-ink-soft">{{ a.desc }}</span>
+      <span class="min-w-0 flex-1 truncate text-ink-soft">{{ a.step ?? a.desc }}</span>
       <span class="row-time w-6 flex-none text-right text-[10.5px] tabular-nums text-faint opacity-70">{{ ago(a.at) }}</span>
     </button>
     <button v-if="list.length > shown.length || all" type="button" class="side-row is-child !py-[2px] text-[11.5px] text-faint" :style="pad" @click="all = !all">

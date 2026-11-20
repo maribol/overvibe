@@ -8,9 +8,10 @@ test('pause: an unpaused pick stays as it is [T1112-11]', () => {
   expect(settle({ ...base, account: 'personal', by: 'rules', paused: ['codex:personal'] })).toEqual({ account: 'personal' })
 })
 
-test('pause: an explicit paused account is refused', () => {
-  expect(() => settle({ ...base, account: 'personal', by: 'asked', paused: ['personal'] })).toThrow('account personal is paused (Settings > Accounts); unpause it or pick another')
-  expect(() => settle({ ...base, tool: 'codex', account: 'x', by: 'asked', accounts: ['default', 'x'], paused: [pauseKey('x', 'codex')] })).toThrow('Codex account x is paused')
+test('pause: an account picked by hand runs even when paused', () => {
+  // picked by hand, a paused account still runs [T1120-1]
+  expect(settle({ ...base, account: 'personal', by: 'asked', paused: ['personal'] })).toEqual({ account: 'personal' })
+  expect(settle({ ...base, tool: 'codex', account: 'x', by: 'asked', accounts: ['default', 'x'], paused: [pauseKey('x', 'codex')] })).toEqual({ account: 'x' })
 })
 
 test('pause: a folder rule on a paused account falls back to the default, with a note', () => {

@@ -9,7 +9,7 @@ import { api, closeRow, deck, select, setView, stopSession } from '../deck'
 type Row = {
   key: string; tmux: string; title: string; tool: string; kind: string; cwd: string; project: string; status: string
   idleSince: number; idleMs: number; pinned: boolean; children: number; queued: number; prompt: string | null
-  reply: string | null; replyFrom: 'transcript' | 'rollout' | 'screen' | null; verdict: 'done' | 'waiting' | 'unsure'; reason: string
+  reply: string | null; replyFrom: 'transcript' | 'rollout' | 'screen' | null; verdict: 'done' | 'waiting' | 'unsure'; reason: string; suspended?: boolean
 }
 type Report = { hours: number; counts: Record<Row['verdict'], number>; sessions: Row[] }
 
@@ -83,7 +83,8 @@ async function closeChosen() {
       try {
         // the same as ⌘W on that session: stop it, then unpin and hide its row [T1111-27]
         const s = deck.sessions.find((x) => x.key === r.key)
-        await stopSession(r.tmux)
+        // a suspended one has nothing running: Close only hides it
+        if (!r.suspended) await stopSession(r.tmux)
         await closeRow(s ?? { key: r.key, sessionId: null })
       } catch (e: any) {
         failed.push(`${r.title}: ${e.message}`)
@@ -137,6 +138,7 @@ async function closeChosen() {
                 <span class="rounded bg-canvas-2 px-1.5 py-0.5 text-[11.5px] text-muted">{{ r.project }}</span>
                 <span class="text-[11.5px] text-faint">{{ toolName(r) }} · idle {{ idle(r.idleMs) }}</span>
                 <span v-if="r.pinned" class="text-[11.5px] text-faint" title="Pinned rows are not selected by default">· pinned</span>
+                <span v-if="r.suspended" class="text-[11.5px] text-faint" title="Suspended to free memory: closing it only hides the row">· suspended</span>
               </div>
               <p class="mt-0.5 text-[12.5px] text-muted">{{ r.reason }}</p>
               <template v-if="r.reply">

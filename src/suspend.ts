@@ -80,3 +80,16 @@ export function keepRunning(r: SuspendRow, o: { now: number; afterMs: number; ty
 
 /** The suspend setting as minutes: an allowed choice, else the default. */
 export const suspendMinutes = (v: unknown): number => (SUSPEND_CHOICES as readonly number[]).includes(Number(v)) && v !== null && v !== '' ? Number(v) : SUSPEND_DEFAULT_MIN
+
+/**
+ * Claude Code compacts an idle session itself at 90% of its 1-hour prompt cache (about 54 min after the last turn),
+ * when its context is at least CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS (200k by default, never under 100k) [T1120-2].
+ * Suspending before that throws the cheap compaction away: the revived session resends the whole context uncached.
+ * So a Claude session that big waits 60 min (or the setting, if longer); smaller ones go at the setting.
+ */
+export const IDLE_COMPACT_AFTER_MIN = 60
+export const idleCompactMin = (env: string | undefined) => Math.max(100_000, Number(env) > 0 ? Number(env) : 200_000)
+export function suspendAfterMin(o: { min: number; tool: string; contextTokens: number | null; idleCompactTokens: number }): number {
+  if (o.tool !== 'claude' || !o.contextTokens || o.contextTokens < o.idleCompactTokens) return o.min
+  return Math.max(o.min, IDLE_COMPACT_AFTER_MIN)
+}

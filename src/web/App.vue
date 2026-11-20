@@ -97,7 +97,14 @@ const actions = {
       if (c.where === 'deck') void closeRow(c).catch((err) => alert(err.message))
     } else if (!deck.stopFor) askStop(c, { close: true })
   },
-  shell: () => startShell(current.value?.cwd ?? workRoot.value).catch((err) => alert(err.message)),
+  // ⌘T / ⌥T: a terminal attached under the open agent session (its folder, nested in its row); a plain one elsewhere;
+  // ⌘⇧T / ⌥⇧T: always a plain one [T1120-4]
+  shellPlain: () => startShell(current.value?.cwd ?? workRoot.value).catch((err) => alert(err.message)),
+  shell: () => {
+    const s = current.value
+    const agent = s?.where === 'deck' && s.tmux && s.kind === 'claude' ? s : null
+    return startShell(s?.cwd ?? workRoot.value, undefined, agent ? `shell: ${agent.title.slice(0, 40)}` : undefined, false, agent?.key).catch((err) => alert(err.message))
+  },
   rename: () => {
     if (current.value?.where === 'deck') openRename()
   },
@@ -116,7 +123,7 @@ const actions = {
 function runCommand(cmd: string) {
   const m = /^tab:([1-9])$/.exec(cmd)
   if (m) actions.tab(Number(m[1]))
-  else if (cmd === 'new' || cmd === 'stop' || cmd === 'shell' || cmd === 'palette' || cmd === 'next' || cmd === 'prev' || cmd === 'rename') actions[cmd]()
+  else if (cmd === 'new' || cmd === 'stop' || cmd === 'shell' || cmd === 'shellPlain' || cmd === 'palette' || cmd === 'next' || cmd === 'prev' || cmd === 'rename') actions[cmd]()
 }
 
 function onKey(e: KeyboardEvent) {
@@ -134,7 +141,7 @@ function onKey(e: KeyboardEvent) {
   else if (e.code === 'KeyW') (hit(), actions.stop())
   else if (/^Digit[1-9]$/.test(e.code)) {
     if (deck.tabs[Number(e.code.slice(5)) - 1]) (hit(), actions.tab(Number(e.code.slice(5))))
-  } else if (e.code === 'KeyT') (hit(), actions.shell())
+  } else if (e.code === 'KeyT') (hit(), e.shiftKey ? actions.shellPlain() : actions.shell())
   else if (e.code === 'KeyR' && current.value?.where === 'deck') (hit(), actions.rename())
   // ⌥Tab / ⌥] next session in the sidebar's visible order, ⌥⇧Tab / ⌥[ the one above (wraps)
   else if (e.code === 'Tab' || e.code === 'BracketRight' || e.code === 'BracketLeft') {
@@ -175,8 +182,8 @@ const updates = computed(() => deck.tools.filter((t) => t.update))
 // the footer tabs; Tasks only while Settings > Tasks view is on [T1112-16], with its open count [T1112-14]
 const navTabs = computed((): { id: 'tasks' | 'requests' | 'messages' | 'stats'; label: string; tip: string; icon: unknown }[] => [
   ...(tasksOn.value ? [{ id: 'tasks' as const, label: 'Tasks', tip: 'Tasks from every TASKS.md', icon: ListTodo }] : []),
-  // Telegram requests, researched and planned, while a bot is set up [T1113-3]; add-on help cards [T1116-18]
-  ...(deck.requests ? [{ id: 'requests' as const, label: 'Requests', tip: 'Customer requests from Telegram and help cards from the add-on', icon: Inbox }] : []),
+  // Telegram requests, researched and planned, while a bot is set up [T1113-3]; an add-on's help cards
+  ...(deck.requests ? [{ id: 'requests' as const, label: 'Requests', tip: 'Customer requests from Telegram, and help cards', icon: Inbox }] : []),
   { id: 'messages', label: 'Messages', tip: 'Messages you sent to sessions', icon: MessageSquareText },
   { id: 'stats', label: 'Stats', tip: 'Stats: sessions, working time, waiting, usage', icon: ChartColumn },
 ])
@@ -257,7 +264,7 @@ watch(tasksOn, (on) => {
 })
 
 let timer: ReturnType<typeof setInterval>
-// the add-on's help cards are read every minute and when this window gets focus [T1116-18] (the server throttles it)
+// an add-on's help cards are read every minute and when this window gets focus (the server throttles it)
 const addonFocus = () => void (deck.requests ? api('/api/addon/poll', {}).catch(() => {}) : undefined)
 onMounted(() => {
   // a link to a session or view wins over the one remembered from last time

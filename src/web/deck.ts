@@ -9,7 +9,7 @@ export type Status = 'busy' | 'idle' | 'waiting' | 'ended' | 'blocked'
 export type Session = {
   key: string
   /** its subagents still running (the Agent tool) [T1118-2] */
-  agents?: { id: string; desc: string; type: string; started: number; at: number }[]
+  agents?: { id: string; desc: string; type: string; started: number; at: number; step?: string }[]
   /** the subagent Claude Code shows now, read off its screen [T1118-5] */
   shownAgent?: string
   where: 'deck' | 'terminal' | 'background' | 'past'
@@ -78,7 +78,7 @@ export type Account = {
   error?: string
   /** a login terminal for it is open; the server probes it the moment the login lands [T1110-84] */
   loggingIn?: boolean
-  /** paused in Settings: nothing new runs on it [T1112-11] */
+  /** paused in Settings: nothing picks it by itself; picked by hand it still runs [T1112-11, T1120-1] */
   paused?: boolean
 }
 
@@ -131,6 +131,8 @@ export const deck = reactive({
   menu: null as { x: number; y: number; s: Session } | null, // right-click menu on a session row // the session the rename dialog is for
   pending: [] as Pending[],
   paletteOpen: false,
+  /** the text the palette opens with (the sidebar filter's "more in older sessions") [T1119-28] */
+  paletteQuery: '',
   toast: null as string | null,
   stopFor: null as Session | null, // the stop confirmation is open for this session
   stopClose: false, // it came from ⌘W / ⌥W: stopping also unpins and hides the row [T1111-27]
@@ -592,8 +594,8 @@ export async function updateSelf() {
   select(r.tmux)
 }
 
-export async function startShell(cwd: string, cmd?: string, name?: string, mkdir?: boolean) {
-  const r = await api<{ tmux: string }>(mkdir ? '/api/sessions' : '/api/shell', mkdir ? { tool: 'shell', cwd, prompt: cmd, name, mkdir } : { cwd, cmd, name })
+export async function startShell(cwd: string, cmd?: string, name?: string, mkdir?: boolean, attach?: string) {
+  const r = await api<{ tmux: string }>(mkdir ? '/api/sessions' : '/api/shell', mkdir ? { tool: 'shell', cwd, prompt: cmd, name, mkdir } : { cwd, cmd, name, ...(attach ? { attach } : {}) })
   await refresh()
   select(r.tmux)
 }

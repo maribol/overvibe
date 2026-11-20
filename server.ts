@@ -16,9 +16,9 @@ import { guardedInput } from './src/mouseguard'
 import { deckClient, deliverNow, discard, kick as kickQueue, ownerInput, queueView } from './src/sendqueue'
 import { checkSpawn, modeOfRecord, recordByProof, ownerSay, findResumable, pastSessions, resumeSession, forget, getRecord, moveLater, moveSession, moveToFolder, sendTo, startShell, preview, startLogin, startSession, stopSession, stopFor, stopFromPage, sharingWith, watchChildren, WATCH_MS, renameSession, focusOn, getFocus, hide, bgCommand, answerPrompt, switchAccount, switchAll, view, suspendSession, reviveSession, savedScreen, autoSuspend, setParent, suspendFor, reviveFor, parentFor, memGuard, subagentOf, showInCli } from './src/sessions'
 import { SUSPEND_CHOICES } from './src/suspend'
-import { addon, startAddon } from './src/addon'
-import { addBot, changeBot, requestAct, requestList, researching, retryFailed, requestOne, requestsOn, requestsOpen, startTelegram, telegramView } from './src/telegram'
-import { accountFor, accountsOf, chromeAccountNow, getSettings, isMode, isPaused, modeFor, modeUnsaved, needsChrome, refusePaused, routeFor, ruleFor, setSettings, type Mode } from './src/routing'
+import { addon, addonLoaded, loadAddons } from './src/addons'
+import { addBot, changeBot, postAct, startFromBurst, startNow, proposePost, requestAct, requestList, researching, retryFailed, requestOne, requestsOn, requestsOpen, startTelegram, telegramView } from './src/telegram'
+import { accountFor, accountsOf, chromeAccountNow, getSettings, isMode, isPaused, modeFor, modeUnsaved, needsChrome, routeFor, ruleFor, setSettings, type Mode } from './src/routing'
 import { loadRouter, routerActive } from './src/localrouter'
 import { chromeOf, ensureAccount, fullUntil, hasAccounts, keyOf, listAccounts, loginArgv, probe, probeAll, toolStatus, forgetToolStatus, validName, watchLogin, type AccountTool } from './src/accounts'
 import { forgetSelfUpdate, forgetUpdate, selfUpdate, selfUpdateCommand } from './src/updates'
@@ -305,7 +305,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     const accounts = listAccounts(undefined, { hidden: getSettings().hiddenAccounts }).map((a) => (DEMO && a.email ? { ...a, email: `${a.name}@example.com` } : a)).map((a) => (a.tool === 'claude' ? { ...a, chrome: chromeOf(a.name) } : a)).map((a) => (isPaused(a.name, a.tool) ? { ...a, paused: true } : a))
     const v = await scopedView()
     refreshTidy()
-    return json({ ...v, sessions: v.sessions.map((s) => withQueue(s)).map((s) => (tidyDone.has(s.key) && s.status !== 'busy' && s.status !== 'waiting' ? { ...s, tidy: tidyDone.get(s.key) } : owesNow(s) ? { ...s, owes: tidyOwes.get(s.key)!.reason } : s)), accounts, tools: await toolStatus(), home: tildify(HOME), homeAbs: HOME, settings: getSettings(), chromeAccount: chromeAccountNow(), router: routerActive(), self: selfUpdate(), pending: pendingAll().filter((x) => inScope(x.cwd)), focus: getFocus(), build: buildId(), requests: requestsOn() || addon.on() ? { open: requestsOpen() + addon.openCount() } : null })
+    return json({ ...v, sessions: v.sessions.map((s) => withQueue(s)).map((s) => (tidyDone.has(s.key) && s.status !== 'busy' && s.status !== 'waiting' ? { ...s, tidy: tidyDone.get(s.key) } : owesNow(s) ? { ...s, owes: tidyOwes.get(s.key)!.reason } : s)), accounts, tools: await toolStatus(), home: tildify(HOME), homeAbs: HOME, settings: getSettings(), chromeAccount: chromeAccountNow(), router: routerActive(), self: selfUpdate(), pending: pendingAll().filter((x) => inScope(x.cwd)), focus: getFocus(), build: buildId(), requests: requestsOn() || addon.on() ? { open: requestsOpen() + addon.openCount() } : null, addons: { desk: addonLoaded } })
   }
   // what Send feedback's "Include version and OS" adds, shown in the dialog before it goes [T1112-120]
   if (p === '/api/feedback/env' && req.method === 'GET') return json(await feedbackEnv())
@@ -452,11 +452,32 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (p === '/api/requests' && req.method === 'GET') {
     const rid = url.searchParams.get('rid')
     try {
-      // add-on help cards ride along as their own kind [T1116-18]
+      // an add-on's help cards ride along as their own kind (src/addons.ts)
       const help = url.searchParams.get('help')
       return json(help ? addon.one(help) : rid ? requestOne(rid) : { requests: requestList(), help: addon.rows(), researching: researching() })
     } catch (e: any) {
       return bad(e.message, 404)
+    }
+  }
+  // overvibe telegram post [T1119-2]: a post (text, pictures) for a linked group: straight in, or after the owner's Send where the group asks for it [T1119-3].
+  // A session may post only to groups linked to its own folder; the owner's CLI (no session) to any.
+  if (p === '/api/telegram/post' && req.method === 'POST') {
+    try {
+      const rec = body.from ? getRecord(String(body.from)) : undefined
+      if (body.from && !rec) return bad('unknown session', 403)
+      const photos = Array.isArray(body.photos) ? body.photos.map(String) : []
+      return json(await proposePost({ to: body.to, rid: body.request, reply: body.reply !== undefined ? Number(body.reply) : undefined, text: String(body.text ?? ''), photos, fromTmux: rec?.tmux ?? null, fromName: rec ? `The Overvibe session "${rec.name}"` : 'You (overvibe CLI)', fromCwd: rec?.cwd ?? null }))
+    } catch (e: any) {
+      return bad(e.message)
+    }
+  }
+  if (p === '/api/telegram/post/act' && req.method === 'POST') {
+    if (body.from || proofOnly) return bad('only the owner sends or cancels a post', 403)
+    try {
+      await postAct(String(body.id), body.act === 'send' ? 'send' : body.act === 'delete' ? 'delete' : 'cancel')
+      return json({ ok: true })
+    } catch (e: any) {
+      return bad(e.message)
     }
   }
   if (p === '/api/requests/act') {
@@ -468,16 +489,18 @@ async function api(req: Request, url: URL): Promise<Response> {
       }
       // a failed research run: Retry or Dismiss [T1118-15]
       if (body.failed) return json(retryFailed(String(body.failed), body.act === 'dismiss'))
+      // a burst still waiting for more messages: research it now [T1119-4]
+      if (body.gathering) return json(body.act === 'session' ? await startFromBurst(String(body.gathering)) : startNow(String(body.gathering)))
       return json(await requestAct(String(body.rid ?? ''), body.act, body.text))
     } catch (e: any) {
       return bad(e.message)
     }
   }
-  // Settings > Add-on [T1116-18]: the token goes in and never comes back out
+  // an add-on's Settings section (src/addons.ts): its token goes in and never comes back out
   if (p === '/api/addon' && req.method === 'GET') return json(addon.view())
   if (p === '/api/addon/picture' && req.method === 'GET') return (await addon.picture(url.searchParams.get('key') ?? '')) ?? bad('no picture', 404)
   if (p === '/api/addon' || p === '/api/addon/poll' || p === '/api/addon/apps') {
-    if (body.from || proofOnly) return bad('only the owner can change the add-on', 403)
+    if (body.from || proofOnly) return bad('only the owner can change this', 403)
     try {
       if (p === '/api/addon/poll') await addon.pollSoon()
       else if (p === '/api/addon/apps') await addon.refreshApps(true)
@@ -761,7 +784,10 @@ async function api(req: Request, url: URL): Promise<Response> {
   // Send feedback [T1112-120]: the page's dialog posts here, and the server sends it on to overvibe.dev
   if (p === '/api/feedback') return json(await sendFeedback(body))
   if (p === '/api/shell') {
-    return json(await startShell(String(body.cwd ?? '~'), body.cmd ? String(body.cmd).slice(0, 2000) : undefined, body.name ? String(body.name) : undefined))
+    // attach: a terminal nested under that agent session, in its folder (⌘⇧T) [T1120-4]
+    const under = body.attach ? getRecord(String(body.attach)) : undefined
+    if (body.attach && (!under || under.kind !== 'claude')) return bad('attach a terminal to an agent session')
+    return json(await startShell(String(body.cwd ?? under?.cwd ?? '~'), body.cmd ? String(body.cmd).slice(0, 2000) : undefined, body.name ? String(body.name) : undefined, undefined, under))
   }
   if (p === '/api/sessions/move-folder') {
     if (!/^[0-9a-f-]{36}$/.test(String(body.sessionId))) return bad('bad session id')
@@ -781,7 +807,7 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (sw) {
     const account = String(body.account ?? '')
     if (!listAccounts('claude').some((a) => a.name === account)) return bad('unknown account')
-    refusePaused(account) // [T1112-11]
+    // a paused account can still be picked by hand [T1120-1]
     const next = await switchAccount(sw[1]!, account)
     // after a usage limit: type "continue" so it picks up the turn the limit cut off (queued until its input is up) [T1116-8]
     if (body.resume === true) await ownerSay(next.tmux, 'continue').catch((e) => console.log(`[limit] continue: ${e?.message ?? e}`))
@@ -790,7 +816,7 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (p === '/api/accounts/switch-all') {
     const account = String(body.account ?? '')
     if (!listAccounts('claude').some((a) => a.name === account)) return bad('unknown account')
-    refusePaused(account) // [T1112-11]
+    // a paused account can still be picked by hand [T1120-1]
     return json(await switchAll(account, body.under ? untildify(String(body.under)) : undefined))
   }
   if (p === '/api/settings') {
@@ -1014,7 +1040,7 @@ async function api(req: Request, url: URL): Promise<Response> {
 startTranscripts()
 startSearch() // [T1112-18]
 startTelegram() // Telegram bots read their linked groups and report to the owner [T1113-3]
-startAddon() // add-on help cards: poll the add-on, watch their TASKS lines [T1116-18]
+void loadAddons() // the private add-ons, when this Mac has them [T1120-3]
 startSkills() // sync the skills library into each CLI now and on every change [T1110-64]
 startUsagePing() // on by default, at most once a day, waits for setup's Welcome step [T1110-72, T1112-101]
 

@@ -10,7 +10,7 @@ import { ensureAccount, envFor, type AccountTool } from './accounts'
 import { asksDeploy } from './deployask'
 import { apiErrorOf, askingOf, meta as tmeta, metas as tmetas, nameOf, notePids, type Tokens } from './transcripts'
 import { busyReason, enqueue, onDeadTarget, queued, typedTimes, typeHeld } from './sendqueue'
-import { isToolShell, keepRunning, pendingTimer, suspendMinutes } from './suspend'
+import { idleCompactMin, isToolShell, keepRunning, pendingTimer, suspendAfterMin, suspendMinutes } from './suspend'
 import { codexInfo, codexSessions } from './codex'
 import { realActivity } from './activity'
 import { projectFor } from './projects'
@@ -725,6 +725,26 @@ export async function memGuard() {
   return kills
 }
 
+/** A note from Overvibe itself to one session, read as a system note (a Telegram post it asked for went out or was cancelled) [T1119-2] */
+export async function overvibeNote(tmux: string, text: string) {
+  const r = getRecord(tmux)
+  if (!r || r.kind === 'shell') return
+  const tool = r.tool ?? 'claude'
+  await enqueue({ tmux: r.tmux, tool, toName: r.name, toSession: r.sessionId || null, from: 'Overvibe', fromSession: null, text, body: `[overvibe note: written by Overvibe itself, not by an agent] ${cleanBody(text)}` })
+  logPeer({ at: Date.now(), from: 'Overvibe', fromSession: null, fromTmux: null, fromTool: null, sender: 'overvibe', to: r.name, toSession: r.sessionId || null, toTmux: r.tmux, toTool: tool, text })
+}
+
+/** Telegram follow-ups relayed to the session working on that thread [T1119-8]: written by people in a group, so the
+ * header says so and the text arrives fenced. Returns false when the session is gone. */
+export async function telegramNote(tmux: string, header: string, text: string): Promise<boolean> {
+  const r = getRecord(tmux)
+  if (!r || r.kind === 'shell' || r.closedAt) return false
+  const tool = r.tool ?? 'claude'
+  await enqueue({ tmux: r.tmux, tool, toName: r.name, toSession: r.sessionId || null, from: 'Telegram', fromSession: null, text: `${header}\n${text}`, body: `${header} ${cleanBody(text)}` })
+  logPeer({ at: Date.now(), from: 'Telegram', fromSession: null, fromTmux: null, fromTool: null, sender: 'overvibe', to: r.name, toSession: r.sessionId || null, toTmux: r.tmux, toTool: tool, text: `${header}\n${text}` })
+  return true
+}
+
 export async function autoSuspend(now = Date.now()) {
   if (!backfilled) await backfillVerdicts().catch((e) => console.log(`[suspend] verdicts: ${e?.message ?? e}`))
   const min = suspendMinutes(getSettings().suspendIdleMin)
@@ -735,7 +755,10 @@ export async function autoSuspend(now = Date.now()) {
     if (row.where !== 'deck' || !row.tmux) continue
     // a revived (or just started) one counts from its start, not from its conversation's last reply
     const since = Math.max(typed(row.tmux), getRecord(row.tmux)?.createdAt ?? 0)
-    const base = { now, afterMs: min * 60_000, typedAt: since, queued: queued(row.tmux).length }
+    // a big Claude context waits for Claude Code's own idle compaction first [T1120-2]
+    const ctx = row.sessionId && (row.tool ?? 'claude') === 'claude' ? tmeta(row.sessionId)?.usage?.t.in ?? null : null
+    const after = suspendAfterMin({ min, tool: row.tool ?? 'claude', contextTokens: ctx, idleCompactTokens: idleCompactMin(process.env.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS) })
+    const base = { now, afterMs: after * 60_000, typedAt: since, queued: queued(row.tmux).length }
     // the cheap checks first; the process list and transcript only for one that would go
     if (keepRunning(row, base)) continue
     if (keepRunning(row, { ...base, ...(await holdsOf(row, now)) })) continue
@@ -1448,10 +1471,10 @@ function maybeAutoName(r: DeckRecord, tm: ReturnType<typeof tmeta>, status: stri
  * A plain login shell in a folder (⌥T, Ctrl+P "$ cmd", New session's Terminal, overvibe new --tool shell), optionally running a command first.
  * `by`: the session that opened it with overvibe new; it is recorded so that session can stop it [T1111-21].
  */
-export async function startShell(cwd0: string, cmd?: string, name0?: string, by?: DeckRecord) {
+export async function startShell(cwd0: string, cmd?: string, name0?: string, by?: DeckRecord, attachTo?: DeckRecord) {
   const cwd = checkCwd(cwd0)
   const sh = loginShell()
-  const rec: DeckRecord = { tmux: shortId(), sessionId: '', cwd, account: '', name: name0?.trim().slice(0, 120) || (cmd ? `$ ${cmd.slice(0, 40)}` : `shell: ${cwd.split('/').pop()}`), createdAt: Date.now(), kind: 'shell', named: true, ...starterOf(by) }
+  const rec: DeckRecord = { tmux: shortId(), sessionId: '', cwd, account: '', name: name0?.trim().slice(0, 120) || (cmd ? `$ ${cmd.slice(0, 40)}` : `shell: ${cwd.split('/').pop()}`), createdAt: Date.now(), kind: 'shell', named: true, ...starterOf(by), ...(attachTo ? { parent: attachTo.tmux, parentId: attachTo.sessionId || undefined, attached: true } : {}) }
   await newSession(rec.tmux, cwd, [sh, '-l'])
   records.push(rec)
   save()

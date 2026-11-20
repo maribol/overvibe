@@ -34,6 +34,8 @@ export type TidyRow = {
   replyFrom: 'transcript' | 'rollout' | 'screen' | null
   verdict: Verdict
   reason: string
+  /** suspended to free memory: nothing to stop, Close only hides it */
+  suspended?: boolean
 }
 
 /** A screen without the input box, footer and blank lines: what an agent or a shell last printed. */
@@ -97,6 +99,22 @@ export async function tidyReport(sessions: ViewSession[], hours = DEFAULT_HOURS,
       key: s.key, tmux: s.tmux!, title: s.title, tool, kind: s.kind, cwd: s.cwd, project: s.project, status,
       idleSince: last, idleMs, pinned, children, queued, prompt: s.prompt ? s.prompt.title ?? '' : null, question: s.question ?? null,
       reply: clipReply(reply), replyFrom, verdict: v.verdict, reason: v.reason,
+    })
+  }
+  // suspended ones too: no screen to read, so the verdict they were suspended with, and done only once idle `hours`
+  for (const s of only ? [] : sessions.filter((x) => x.where === 'deck' && !x.tmux && x.suspended && x.kind !== 'login')) {
+    const tool = s.kind === 'shell' ? 'shell' : s.tool ?? 'claude'
+    const last = (tool === 'claude' && s.sessionId && tmeta(s.sessionId)?.lastAt) || s.last
+    const idleMs = Math.max(0, now - last)
+    const reply = tool === 'claude' && s.sessionId ? lastReplyStateOf(s.sessionId).reply : tool === 'codex' && s.sessionId ? codexLastReply(s.sessionId) : null
+    let verdict: Verdict = s.suspendedVerdict ?? 'unsure'
+    let reason = s.suspendedReason ?? 'suspended before verdicts were kept'
+    if (verdict === 'done' && idleMs < hours * 3600_000) (verdict = 'unsure'), (reason = `suspended, idle under ${hours} h`)
+    rows.push({
+      key: s.key, tmux: s.key, title: s.title, tool, kind: s.kind, cwd: s.cwd, project: s.project, status: s.status,
+      idleSince: last, idleMs, pinned: pins.has(s.hand ? s.key : s.sessionId ?? s.key), children: 0, queued: queueView(s.key)?.length ?? 0,
+      prompt: null, question: null, reply: clipReply(reply), replyFrom: reply ? (tool === 'codex' ? 'rollout' : 'transcript') : null,
+      verdict, reason, suspended: true,
     })
   }
   // longest idle first within each group

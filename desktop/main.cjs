@@ -176,6 +176,7 @@ function commandFor(input) {
     // ⌘⇧[ / ⌘⇧], the Mac tab-switch keys
     if (code === 'BracketLeft') return 'prev'
     if (code === 'BracketRight') return 'next'
+    if (code === 'KeyT') return 'shellPlain' // ⌘⇧T: a plain terminal; ⌘T attaches it to the open agent session [T1120-4]
     return null // ⌘⇧R falls through to the View menu's Reload
   }
   if (code === 'KeyN') return 'new'
@@ -286,7 +287,8 @@ function buildMenu() {
       label: 'Session',
       submenu: [
         item('New Session', 'Cmd+N', 'new'),
-        item('New Shell Here', 'Cmd+T', 'shell'),
+        item('New Terminal (attached to this session)', 'Cmd+T', 'shell'),
+        item('New Plain Terminal', 'Cmd+Shift+T', 'shellPlain'),
         item('Close Session…', 'Cmd+W', 'stop'),
         item('Rename Session…', 'Cmd+R', 'rename'),
         { type: 'separator' },

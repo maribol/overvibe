@@ -56,7 +56,7 @@ const tone = (u: number) => (u >= 90 ? 'var(--color-chip-red-fg)' : u >= 70 ? 'v
       <div class="h-1 min-w-5 flex-1 overflow-hidden rounded-full bg-canvas-2">
         <div v-if="topUse(a) != null" class="h-full rounded-full" :style="{ width: Math.min(100, topUse(a)!) + '%', background: tone(topUse(a)!) }"></div>
       </div>
-      <span v-if="a.paused" class="flex-none rounded px-1 text-[10.5px]" style="background: var(--color-chip-amber-bg); color: var(--color-chip-amber-fg)" title="Paused in Settings: no new, resumed or switched sessions run on it">paused</span>
+      <span v-if="a.paused" class="flex-none rounded px-1 text-[10.5px]" style="background: var(--color-chip-amber-bg); color: var(--color-chip-amber-fg)" title="Paused in Settings: the router and automatic picks leave it out; picked by hand it still runs">paused</span>
       <span class="w-8 flex-none text-right tabular-nums text-faint">{{ topUse(a) != null ? Math.round(topUse(a)!) + '%' : a.loggingIn ? 'login' : a.email ? '…' : 'off' }}</span>
     </div>
   </section>

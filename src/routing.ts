@@ -24,7 +24,7 @@ const FILE = join(DATA_DIR, 'settings.json')
 // move), else the deck key.
 // codex: the same default and per-folder rules for Codex accounts.
 // hiddenAccounts: accounts the owner hid (Remove in Settings), as "name" (Claude) or "codex:name". Their folders stay on disk.
-// pausedAccounts: accounts nothing new may run on, same keys (src/pause.ts) [T1112-11].
+// pausedAccounts: accounts nothing picks by itself (picked by hand they run) [T1120-1], same keys (src/pause.ts) [T1112-11].
 // tasksView: the Tasks view and its TASKS.md reads on or off; unset until the first run decides (server.ts) [T1112-16].
 export type Rules = { defaultAccount: string; projects: Record<string, string> }
 // spawnLimits: how deep sessions may start sessions (levels below one the owner started) and how many running ones each may have [T1110-81]
@@ -36,7 +36,7 @@ export const SPAWN_DEFAULTS: SpawnLimits = { maxDepth: 3, maxChildren: 8 }
 // already had a settings file or sessions before the setting existed (firstMode), stored so it never flips by itself.
 export type Mode = 'auto' | 'ask'
 export const isMode = (m: unknown): m is Mode => m === 'auto' || m === 'ask'
-export type Settings = Rules & { permissionMode: Mode; modeProjects: Record<string, Mode>; spawnLimits: SpawnLimits; codex: Rules; hiddenAccounts: string[]; pausedAccounts: string[]; remoteOff: string[]; chromeAccount: string | null; chromeProjects: Record<string, boolean>; projectOrder: string[]; projectNames: Record<string, string>; pins: string[]; tasksView?: boolean; sidebarAccounts?: boolean; sidebarOrder?: 'project' | 'newest'; /** minutes idle before an agent is suspended, 0 = never [T1116-3] */ suspendIdleMin?: number; /** false: add-on help cards stay in Requests, none to Telegram [T1118-19] */ helpCardsTelegram?: boolean }
+export type Settings = Rules & { permissionMode: Mode; modeProjects: Record<string, Mode>; spawnLimits: SpawnLimits; codex: Rules; hiddenAccounts: string[]; pausedAccounts: string[]; remoteOff: string[]; chromeAccount: string | null; chromeProjects: Record<string, boolean>; projectOrder: string[]; projectNames: Record<string, string>; pins: string[]; tasksView?: boolean; sidebarAccounts?: boolean; sidebarOrder?: 'project' | 'newest'; /** minutes idle before an agent is suspended, 0 = never [T1116-3] */ suspendIdleMin?: number; /** false: an add-on's help cards stay in Requests, none to Telegram */ helpCardsTelegram?: boolean }
 let settings: Settings = { defaultAccount: 'auto', projects: {}, permissionMode: 'auto', modeProjects: {}, spawnLimits: { ...SPAWN_DEFAULTS }, codex: { defaultAccount: 'auto', projects: {} }, hiddenAccounts: [], pausedAccounts: [], remoteOff: [], chromeAccount: null, chromeProjects: {}, projectOrder: [], projectNames: {}, pins: [] }
 const hadFile = existsSync(FILE)
 let savedMode: unknown

@@ -13,7 +13,7 @@ set -euo pipefail
 PUSH=0
 CLONE="$HOME/scratchpad/agent-deck/release/public"
 REMOTE="git@github-maribol:maribol/overvibe.git"
-EXCLUDE=(TASKS.md CLAUDE.md .cursor)
+EXCLUDE=(TASKS.md CLAUDE.md .cursor src/private src/web/private)
 
 while [ $# -gt 0 ]; do
   case "$1" in

@@ -69,6 +69,6 @@ export function accountRows(a: { plan?: string; windows?: Record<string, { used:
     `${Math.round(w.used)}%${w.resetsAt ? `, resets ${resetsIn(w.resetsAt, now)}` : ''}`,
   ])
   if (a.plan) rows.push(['Plan', a.plan])
-  if (a.paused) rows.push(['Paused', 'nothing new runs on it'])
+  if (a.paused) rows.push(['Paused', 'not picked by itself; picked by hand it runs'])
   return rows
 }

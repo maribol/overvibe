@@ -5,7 +5,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { ChevronDown, ChevronUp, EyeOff, GripVertical, LogIn, Plus, RefreshCw, Sparkles } from 'lucide-vue-next'
 import TelegramPanel from './TelegramPanel.vue'
-import AddonPanel from './AddonPanel.vue'
+import { addonPanels } from '../addons'
 import Spinner from './Spinner.vue'
 import WorkRootField from './WorkRootField.vue'
 import { openSetup } from '../setup'
@@ -119,7 +119,7 @@ async function setTasksView(on: boolean) {
   await api('/api/settings', { tasksView: on })
   refresh()
 }
-// Pause [T1112-11]: nothing new runs on the account; sessions already on it keep running
+// Pause [T1112-11, T1120-1]: nothing picks the account by itself; picked by hand it runs
 async function setPaused(a: Account, paused: boolean) {
   await api('/api/settings', { pauseAccount: { name: a.name, tool: a.tool, paused } })
   refresh()
@@ -265,7 +265,7 @@ const deckSessions = computed(() => deck.sessions.filter((s) => s.where === 'dec
           <div class="flex items-end justify-between">
             <div>
               <h2 class="text-lg font-semibold">Accounts</h2>
-              <p class="text-[13px] text-muted">Each account is its own login, kept alive with a free check every 3 hours, so none expires from sitting unused. agy has one login of its own, so it has no accounts here. A paused account takes no new, resumed or switched sessions; folder rules and the default skip to another account, and sessions already running on it keep running.</p>
+              <p class="text-[13px] text-muted">Each account is its own login, kept alive with a free check every 3 hours, so none expires from sitting unused. agy has one login of its own, so it has no accounts here. A paused account is never picked by itself: the router, folder rules, the default and resumes skip to another account. Picked by hand (New session, a switch) it still runs, and sessions already on it keep running.</p>
             </div>
             <button class="btn btn-brand btn-sm" @click="deck.addAccountOpen = true"><Plus :size="15" /> Add account</button>
           </div>
@@ -397,7 +397,7 @@ const deckSessions = computed(() => deck.sessions.filter((s) => s.where === 'dec
                 <option :value="0">Never</option>
               </select>
             </div>
-            <p class="mt-2 text-[12.5px] leading-relaxed text-muted">Each Claude Code or Codex session holds 300-800 MB while it waits. One that has been idle this long is stopped to free it: its last screen stays in its row, and Revive (or a message from another session) resumes the same conversation. Sessions working, waiting on you, running background work or with messages queued are never suspended.</p>
+            <p class="mt-2 text-[12.5px] leading-relaxed text-muted">Each Claude Code or Codex session holds 300-800 MB while it waits. One that has been idle this long is stopped to free it: its last screen stays in its row, and Revive (or a message from another session) resumes the same conversation. Sessions working, waiting on you, running background work or with messages queued are never suspended. A Claude session with 200k or more in context waits at least an hour, so Claude Code first compacts it while its cache is still warm and a revive resumes from the summary.</p>
           </div>
         </section>
 
@@ -504,7 +504,7 @@ const deckSessions = computed(() => deck.sessions.filter((s) => s.where === 'dec
 
         <TelegramPanel v-if="current === 'telegram'" data-section="telegram" />
 
-        <AddonPanel v-if="current === 'addon'" data-section="addon" />
+        <component :is="addonPanels[current]" v-if="addonPanels[current]" :data-section="current" />
 
         <!-- spawn limits [T1110-81] -->
         <section v-show="current === 'limits'" data-section="limits">

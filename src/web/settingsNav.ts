@@ -43,7 +43,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     label: 'Integrations',
     items: [
       { id: 'telegram', label: 'Telegram', aka: ['Telegram bot', 'Customer groups'] },
-      { id: 'addon', label: 'Add-on', aka: ['Add-on', 'Help cards'] },
     ],
   },
   { label: 'Privacy', items: [{ id: 'usage', label: 'Usage ping' }] },

@@ -72,7 +72,7 @@ const tool = ref<NewTool>(deck.newTool || (localStorage.getItem('deck.tool') as 
 watch(tool, (t) => t !== 'shell' && localStorage.setItem('deck.tool', t))
 // a Codex session only offers Codex accounts; a name picked for the other tool goes back to auto
 watch(tool, (t) => {
-  if (account.value !== 'auto' && !accountsFor(t).some((a) => a.name === account.value && !a.paused)) account.value = 'auto'
+  if (account.value !== 'auto' && !accountsFor(t).some((a) => a.name === account.value)) account.value = 'auto'
 })
 const TOOL_LABEL: Record<NewTool, string> = { claude: 'Claude Code', codex: 'Codex', agy: 'agy', shell: 'Terminal' }
 const err = ref('')
@@ -238,7 +238,7 @@ function onCompose() {
         <label v-if="tool === 'claude' || tool === 'codex'" class="text-[12px] font-medium text-muted">{{ tool === 'codex' ? 'Codex account' : 'Account' }}
           <select v-model="account" class="input mt-1 !py-2">
             <option value="auto">{{ tool === 'codex' ? 'Folder or default account' : autoLabel() }}</option>
-            <option v-for="a in accountsFor(tool)" :key="a.name" :value="a.name" :disabled="a.paused">{{ a.name }}{{ a.paused ? ' · paused' : a.email ? '' : ' · not logged in' }}</option>
+            <option v-for="a in accountsFor(tool)" :key="a.name" :value="a.name" >{{ a.name }}{{ a.paused ? ' · paused (only when picked)' : a.email ? '' : ' · not logged in' }}</option>
           </select>
         </label>
         <div v-else-if="tool === 'agy'" class="text-[12px] font-medium text-muted">Account

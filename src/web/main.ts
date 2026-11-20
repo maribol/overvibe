@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import '@xterm/xterm/css/xterm.css'
 import './style.css'
+import './addons'
 import App from './App.vue'
 import { applyTheme } from './deck'
 
